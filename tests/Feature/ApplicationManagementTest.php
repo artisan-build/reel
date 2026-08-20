@@ -1,0 +1,266 @@
+<?php
+
+declare(strict_types=1);
+
+use App\Enums\CaptureSeverity;
+use App\Enums\CredentialStatus;
+use App\Livewire\Applications\Create;
+use App\Livewire\Applications\Show;
+use App\Models\Application;
+use App\Models\ApplicationCredential;
+use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
+use Illuminate\Routing\Route as RoutingRoute;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
+use Livewire\Livewire;
+
+it('stores the complete application policy behind an opaque public route key', function (): void {
+    $application = Application::factory()->create([
+        'allowed_origins' => ['https://app.example.com', 'http://localhost:8000'],
+        'severity' => CaptureSeverity::AllText,
+        'mask_selectors' => ['.account-number'],
+        'block_selectors' => ['.payment-card'],
+        'excluded_paths' => ['/billing/*'],
+        'sampling_percent' => 35,
+        'ingest_enabled' => false,
+    ]);
+
+    expect($application->public_id)
+        ->toMatch('/^[0-9A-HJKMNP-TV-Z]{26}$/')
+        ->not->toBe((string) $application->id)
+        ->and($application->getRouteKeyName())->toBe('public_id')
+        ->and($application->allowed_origins)->toBe(['https://app.example.com', 'http://localhost:8000'])
+        ->and($application->severity)->toBe(CaptureSeverity::AllText)
+        ->and($application->mask_selectors)->toBe(['.account-number'])
+        ->and($application->block_selectors)->toBe(['.payment-card'])
+        ->and($application->excluded_paths)->toBe(['/billing/*'])
+        ->and($application->sampling_percent)->toBe(35)
+        ->and($application->ingest_enabled)->toBeFalse();
+
+    $admin = User::factory()->admin()->create();
+
+    $this->actingAs($admin)
+        ->get('/applications/'.$application->id)
+        ->assertNotFound();
+
+    $this->get(route('admin.applications.show', $application))->assertOk();
+});
+
+it('guards every application administration route from guests and non administrators', function (): void {
+    $application = Application::factory()->create();
+    $adminRoutes = collect(Route::getRoutes()->getRoutes())
+        ->filter(fn (RoutingRoute $route): bool => $route->uri() === 'applications'
+            || str_starts_with($route->uri(), 'applications/'))
+        ->values();
+
+    expect($adminRoutes->pluck('action.as')->all())->toEqualCanonicalizing([
+        'admin.applications.index',
+        'admin.applications.create',
+        'admin.applications.show',
+    ]);
+
+    foreach ($adminRoutes as $route) {
+        $parameters = in_array('application', $route->parameterNames(), true)
+            ? ['application' => $application]
+            : [];
+
+        $this->get(route($route->getName(), $parameters))->assertRedirect(route('login'));
+    }
+
+    $this->actingAs(User::factory()->create());
+
+    foreach ($adminRoutes as $route) {
+        $parameters = in_array('application', $route->parameterNames(), true)
+            ? ['application' => $application]
+            : [];
+
+        $this->get(route($route->getName(), $parameters))->assertForbidden();
+    }
+});
+
+it('creates an application and displays its enrollment code exactly once', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+
+    Livewire::test(Create::class)
+        ->set('form.name', 'Storefront')
+        ->set('form.allowedOrigins', "https://store.example.com\nhttp://localhost:8000")
+        ->set('form.samplingPercent', 25)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $application = Application::query()->sole();
+    $credential = $application->credentials()->sole();
+    $code = session('enrollment.code');
+
+    expect($code)->toBeString()->not->toBeEmpty()
+        ->and($credential->enrollment_code_hash)->not->toBe($code)
+        ->and(Hash::check($code, $credential->enrollment_code_hash))->toBeTrue()
+        ->and($credential->toArray())->not->toHaveKey('enrollment_code_hash')
+        ->and($credential->getAttribute('enrollment_code'))->toBeNull();
+
+    $firstDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
+
+    expect($firstDisplay->getContent())->toContain($code);
+
+    $secondDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
+
+    expect($secondDisplay->getContent())->not->toContain($code);
+});
+
+it('rejects policy changes below the immutable inputs baseline', function (): void {
+    $admin = User::factory()->admin()->create();
+    $application = Application::factory()->create([
+        'severity' => CaptureSeverity::Inputs,
+    ]);
+
+    $this->actingAs($admin);
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->set('form.severity', 'none')
+        ->call('updateApplication')
+        ->assertHasErrors(['form.severity']);
+
+    expect($application->refresh()->severity)->toBe(CaptureSeverity::Inputs);
+
+    $this->get(route('admin.applications.show', $application))
+        ->assertSee('always masked')
+        ->assertDontSee('Disable masking');
+});
+
+it('prevents raw SQL from weakening capture severity below the inputs baseline', function (): void {
+    $application = Application::factory()->create();
+
+    expect(fn () => DB::update(
+        "UPDATE applications SET severity = 'off' WHERE id = ?",
+        [$application->id],
+    ))->toThrow(QueryException::class);
+});
+
+it('constrains sampling percent at the database boundary', function (): void {
+    $application = Application::factory()->create();
+
+    expect(fn () => DB::update(
+        'UPDATE applications SET sampling_percent = 101 WHERE id = ?',
+        [$application->id],
+    ))->toThrow(QueryException::class);
+});
+
+it('validates allowed origins as origins rather than arbitrary URLs', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+
+    Livewire::test(Create::class)
+        ->set('form.name', 'Invalid origin')
+        ->set('form.allowedOrigins', 'https://example.com/private?token=value')
+        ->call('save')
+        ->assertHasErrors(['allowed_origins.0']);
+
+    expect(Application::query()->count())->toBe(0);
+});
+
+it('scopes credential mutations through their owning application', function (): void {
+    $admin = User::factory()->admin()->create();
+    $applicationA = Application::factory()->create();
+    $applicationB = Application::factory()->create();
+    $credentialB = ApplicationCredential::factory()->for($applicationB)->create();
+
+    $this->actingAs($admin);
+
+    expect(fn () => Livewire::test(Show::class, ['application' => $applicationA])
+        ->call('revokeCredential', $credentialB->id))
+        ->toThrow(ModelNotFoundException::class);
+
+    expect($credentialB->refresh()->status)->toBeNull();
+});
+
+it('does not expose admin Livewire actions when instantiated by a non administrator', function (): void {
+    $this->actingAs(User::factory()->create());
+
+    Livewire::test(Create::class)->assertForbidden();
+});
+
+it('forbids every application management action for non administrators', function (): void {
+    $admin = User::factory()->admin()->create();
+    $viewer = User::factory()->create();
+    $application = Application::factory()->create();
+    $credential = ApplicationCredential::factory()->for($application)->create();
+    $actions = [
+        'updateApplication' => [],
+        'toggleIngest' => [],
+        'rotateCredential' => [],
+        'revokeCredential' => [$credential->id],
+    ];
+    $publicMethods = collect((new ReflectionClass(Show::class))->getMethods(ReflectionMethod::IS_PUBLIC))
+        ->filter(fn (ReflectionMethod $method): bool => $method->getDeclaringClass()->getName() === Show::class)
+        ->reject(fn (ReflectionMethod $method): bool => in_array($method->getName(), ['mount', 'render', 'application'], true))
+        ->map(fn (ReflectionMethod $method): string => $method->getName())
+        ->values()
+        ->all();
+
+    expect($publicMethods)->toEqualCanonicalizing(array_keys($actions));
+
+    foreach ($actions as $action => $arguments) {
+        $this->actingAs($admin);
+        $component = Livewire::test(Show::class, ['application' => $application]);
+
+        $this->actingAs($viewer);
+        $component->call($action, ...$arguments)->assertForbidden();
+    }
+});
+
+it('does not display an enrollment code after it expires', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+
+    Livewire::test(Create::class)
+        ->set('form.name', 'Delayed setup')
+        ->set('form.allowedOrigins', 'https://delayed.example.com')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $application = Application::query()->sole();
+    $code = session('enrollment.code');
+
+    $this->travel(16)->minutes();
+
+    $this->get(route('admin.applications.show', $application))
+        ->assertOk()
+        ->assertDontSeeText($code)
+        ->assertSee('Enrollment code expired');
+});
+
+it('stores no private or secret key column on application credentials', function (): void {
+    expect(Schema::getColumnListing('application_credentials'))
+        ->each(fn ($column) => $column->not->toMatch('/private|secret_key/i'));
+});
+
+it('allows overlapping credentials and revokes only the selected credential', function (): void {
+    $admin = User::factory()->admin()->create();
+    $application = Application::factory()->create();
+    $first = ApplicationCredential::factory()->for($application)->create([
+        'public_key' => testRsaKeyPair()['public'],
+        'status' => CredentialStatus::Active,
+        'enrollment_code_hash' => null,
+        'enrolled_at' => now(),
+    ]);
+    $second = ApplicationCredential::factory()->for($application)->create([
+        'public_key' => testRsaKeyPair()['public'],
+        'status' => CredentialStatus::Active,
+        'enrollment_code_hash' => null,
+        'enrolled_at' => now(),
+    ]);
+
+    $this->actingAs($admin);
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->call('revokeCredential', $first->id)
+        ->assertHasNoErrors();
+
+    expect($first->refresh()->status)->toBe(CredentialStatus::Revoked)
+        ->and($first->revoked_at)->not->toBeNull()
+        ->and($second->refresh()->isActive())->toBeTrue()
+        ->and(ApplicationCredential::query()->count())->toBe(2)
+        ->and(Application::query()->count())->toBe(1);
+});
