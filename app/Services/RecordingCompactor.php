@@ -45,13 +45,13 @@ class RecordingCompactor
                 return $locked->fresh(['application']);
             }
 
-            if ($locked->status !== RecordingSessionStatus::Compacting) {
-                return null;
+            if ($locked->status === RecordingSessionStatus::Compacting) {
+                $locked->increment('compaction_attempts');
+
+                return $locked->fresh(['application']);
             }
 
-            $locked->increment('compaction_attempts');
-
-            return $locked->fresh(['application']);
+            return null;
         });
 
         if (! $session instanceof RecordingSession) {

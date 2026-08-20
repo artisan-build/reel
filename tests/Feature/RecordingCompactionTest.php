@@ -200,7 +200,6 @@ it('makes a duplicate compaction job a no-op without creating another object', f
 it('lets deletion win the locked publication race and schedules candidate cleanup', function (): void {
     Queue::fake();
     $session = createCompactionFixture();
-    $temporaryKey = $session->chunks()->sole()->object_key;
     $lockQueries = [];
     DB::listen(function (QueryExecuted $query) use (&$lockQueries): void {
         if (str_contains(strtolower($query->sql), 'recording_sessions')
@@ -219,9 +218,73 @@ it('lets deletion win the locked publication race and schedules candidate cleanu
     expect($session->status)->toBe(RecordingSessionStatus::Deleting)
         ->and($session->manifest)->toBeNull()
         ->and($lockQueries)->not->toBeEmpty()
-        ->and(DB::table('operational_counters')->where('metric', 'post_delete_publish_preventions')->value('value'))->toBe(1);
+        ->and(DB::table('operational_counters')->where('metric', 'post_delete_publish_preventions')->value('value'))->toBe(1)
+        ->and($session->transitions()->where('new_state', RecordingSessionStatus::Ready->value)->count())->toBe(0);
+});
+
+it('retains temporary chunks and schedules exact candidate cleanup when deletion blocks publication', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture();
+    $temporaryKey = $session->chunks()->sole()->object_key;
+    $candidateKey = null;
+    Event::listen(CompactionCandidateVerified::class, function (CompactionCandidateVerified $event) use (&$candidateKey): void {
+        $candidateKey = $event->candidateKey;
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Deleting, 'concurrent_deletion');
+    });
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    expect($candidateKey)->not->toBeNull()
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and($session->fresh()->manifest)->toBeNull()
+        ->and($session->chunks()->sole()->purged_at)->toBeNull();
     Storage::disk('local')->assertExists($temporaryKey);
-    Queue::assertPushed(CleanupCompactionCandidate::class, 1);
+    Queue::assertPushed(
+        CleanupCompactionCandidate::class,
+        fn (CleanupCompactionCandidate $job): bool => $job->candidateKey === $candidateKey && $job->disk === 'local',
+    );
+});
+
+it('blocks publication after a concurrent transition to failed', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture();
+    Event::listen(CompactionCandidateVerified::class, function (CompactionCandidateVerified $event): void {
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Failed, 'concurrent_failure');
+    });
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    $session->refresh();
+    expect($session->status)->toBe(RecordingSessionStatus::Failed)
+        ->and($session->manifest)->toBeNull()
+        ->and($session->transitions()->where('new_state', RecordingSessionStatus::Ready->value)->count())->toBe(0)
+        ->and(DB::table('operational_counters')->where('metric', 'post_delete_publish_preventions')->count())->toBe(0);
+});
+
+it('retains temporary chunks and schedules exact candidate cleanup when failure blocks publication', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture();
+    $temporaryKey = $session->chunks()->sole()->object_key;
+    $candidateKey = null;
+    Event::listen(CompactionCandidateVerified::class, function (CompactionCandidateVerified $event) use (&$candidateKey): void {
+        $candidateKey = $event->candidateKey;
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Failed, 'concurrent_failure');
+    });
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    expect($candidateKey)->not->toBeNull()
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Failed)
+        ->and($session->fresh()->manifest)->toBeNull()
+        ->and($session->chunks()->sole()->purged_at)->toBeNull();
+    Storage::disk('local')->assertExists($temporaryKey);
+    Queue::assertPushed(
+        CleanupCompactionCandidate::class,
+        fn (CleanupCompactionCandidate $job): bool => $job->candidateKey === $candidateKey && $job->disk === 'local',
+    );
 });
 
 it('detects candidate and persisted manifest checksum failures', function (): void {
