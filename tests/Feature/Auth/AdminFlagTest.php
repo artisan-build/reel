@@ -14,6 +14,8 @@ it('adds a guarded boolean admin flag defaulting to false', function (): void {
     $user = User::factory()->create();
 
     $this->assertSame(false, $user->is_admin);
+    // PostgreSQL PDO already returns native booleans, so assert the explicit cast for portability.
+    $this->assertSame('boolean', (new User)->getCasts()['is_admin'] ?? null);
 
     $guardedUser = User::query()->create([
         'name' => 'Guarded User',
@@ -31,6 +33,15 @@ it('adds a guarded boolean admin flag defaulting to false', function (): void {
 
     $this->assertSame(true, $guardedUser->refresh()->is_admin);
     $this->assertSame(true, User::factory()->admin()->create()->is_admin);
+
+    $forced = User::forceCreate([
+        'name' => 'Forced Admin',
+        'email' => 'forced@example.com',
+        'password' => 'password',
+        'is_admin' => true,
+    ]);
+
+    $this->assertSame(true, $forced->refresh()->is_admin);
     $this->assertNotContains('is_admin', (new User)->getFillable());
 });
 
