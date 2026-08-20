@@ -184,7 +184,9 @@ class ChunkPrivacyValidator
     {
         $this->assertOnlyKeys($data, ['tag', 'payload']);
 
-        if (($data['tag'] ?? null) !== 'reel.error' || ! isset($data['payload']) || ! is_array($data['payload'])) {
+        if (! in_array($data['tag'] ?? null, ['reel.error', 'reel.server_error'], true)
+            || ! isset($data['payload'])
+            || ! is_array($data['payload'])) {
             $this->reject('unknown_custom_event');
         }
 
@@ -195,8 +197,13 @@ class ChunkPrivacyValidator
             || ! is_string($payload['method'])
             || ! is_string($payload['path'])
             || ! is_int($payload['status'])
+            || preg_match("/^[A-Z0-9!#$%&'*+.^_`|~-]{1,32}$/", $payload['method']) !== 1
+            || ! str_starts_with($payload['path'], '/')
+            || strlen($payload['path']) > 2048
             || str_contains($payload['path'], '?')
-            || str_contains($payload['path'], '#')) {
+            || str_contains($payload['path'], '#')
+            || $payload['status'] < 500
+            || $payload['status'] > 599) {
             $this->reject('invalid_custom_event');
         }
     }

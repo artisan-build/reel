@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace ArtisanBuild\ReelClient;
 
 use ArtisanBuild\ReelClient\Console\InstallCommand;
+use ArtisanBuild\ReelClient\Http\Middleware\CorrelateReelRequest;
 use ArtisanBuild\ReelClient\Http\Middleware\PreventReelCapture;
 use ArtisanBuild\ReelClient\Http\Middleware\PrivateReelSurface;
+use ArtisanBuild\ReelClient\Http\Middleware\RedactReelHeaders;
 use ArtisanBuild\ReelClient\Http\Middleware\RememberCapturePolicy;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
+use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 use Illuminate\Routing\RouteRegistrar;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -69,8 +73,19 @@ final class ReelClientServiceProvider extends ServiceProvider
         $kernel = $this->app->make(HttpKernelContract::class);
 
         if ($kernel instanceof HttpKernel) {
+            $kernel->prependMiddleware(RedactReelHeaders::class);
             $kernel->pushMiddleware(RememberCapturePolicy::class);
         }
+
+        $router->pushMiddlewareToGroup('web', CorrelateReelRequest::class);
+
+        Event::listen(RequestHandled::class, function (RequestHandled $event): void {
+            if ($event->request->attributes->get(Correlation::BINDING_ATTRIBUTE) === 'host_bound'
+                && ! CapturePolicy::isHidden($event->request->route())
+                && $event->response->getStatusCode() >= 500) {
+                $event->response->headers->set(Correlation::SERVER_ERROR_HEADER, '1');
+            }
+        });
 
         Router::macro('hiddenFromReel', function (): RouteRegistrar {
             /** @var Router $this */

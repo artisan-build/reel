@@ -20,6 +20,7 @@ final class SessionGrantController
         $request->validate([
             'consent' => ['required', 'accepted'],
             'session_id' => ['sometimes', 'nullable', 'string'],
+            'path' => ['sometimes', 'nullable', 'string', 'max:2048'],
         ]);
 
         abort_if($request->session()->get('reel.current_page_hidden', false) === true, 403);
@@ -60,6 +61,7 @@ final class SessionGrantController
             $sessionId,
             $expiresAt->getTimestamp(),
             (int) config('reel.grant.max_sessions_per_visitor'),
+            is_string($request->input('path')) ? $request->input('path') : null,
         );
 
         return response()->json([

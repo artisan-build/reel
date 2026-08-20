@@ -48,6 +48,7 @@ it('generates the private key locally and enrolls only the public key', function
     expect($written)->toContain("APP_NAME=Fixture\r\n# untouched comment\r\nCUSTOM_VALUE='byte exact'\r\n")
         ->and($written)->toContain('REEL_URL="https://reel.example"')
         ->and($written)->toContain('REEL_APPLICATION_ID="app-public-id"')
+        ->and($written)->toContain('REEL_CONTEXT_EXPORT="off"')
         ->and($written)->not->toContain('BEGIN PRIVATE KEY');
 
     preg_match('/^REEL_PRIVATE_KEY="([^"]+)"\r?$/m', $written, $matches);

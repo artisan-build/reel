@@ -10,6 +10,10 @@ return [
     'url' => env('REEL_URL'),
     'application_id' => env('REEL_APPLICATION_ID'),
     'private_key' => env('REEL_PRIVATE_KEY'),
+    'correlation' => [
+        'context_export' => env('REEL_CONTEXT_EXPORT', 'off'),
+        'approximate_window_seconds' => 5 * 60,
+    ],
     'grant' => [
         'issuer' => SessionGrant::ISSUER,
         'audience' => SessionGrant::AUDIENCE,

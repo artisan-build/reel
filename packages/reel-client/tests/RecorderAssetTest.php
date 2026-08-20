@@ -175,7 +175,7 @@ it('produces reconstructable FullSnapshot-first epochs with monotonic sequences'
     expect($secondEvents)->not->toBeEmpty();
     expect($newEpochEvents)->not->toBeEmpty();
 
-    expect($result['initial']['bufferedTypes'])->toBe([2, 4, 3])
+    expect($result['initial']['bufferedTypes'])->toBe([2, 4, 3, 5, 5, 5, 5])
         ->and($firstEvents[0]['type'])->toBe(2)
         ->and($newEpochEvents[0]['type'])->toBe(2)
         ->and($secondEvents[0]['data']['text'])->toBe('***')
@@ -207,6 +207,42 @@ it('executes fetch and xhr wrappers without changing host semantics', function (
     $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
 
     expect($result['nonInterference'])->each->toBeTrue();
+});
+
+it('correlates only same-origin application requests without attaching the upload grant', function (): void {
+    $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+
+    expect($result['requestHeaders'])->toBe([
+        'fetch' => 'session-1',
+        'fetchGrant' => null,
+        'xhr' => 'session-1',
+        'xhrGrant' => null,
+        'crossFetch' => null,
+        'crossXhr' => null,
+    ]);
+});
+
+it('records sanitized browser and server error markers only for same-origin responses', function (): void {
+    $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+
+    expect($result['errorMarkers'])->toHaveCount(4)
+        ->and(array_column(array_column($result['errorMarkers'], 'data'), 'tag'))
+        ->toBe(['reel.error', 'reel.server_error', 'reel.error', 'reel.server_error'])
+        ->and(array_column(array_column(array_column($result['errorMarkers'], 'data'), 'payload'), 'path'))
+        ->toBe(['/host-error', '/host-server-error', '/host-xhr-error', '/host-xhr-server-error'])
+        ->and(json_encode($result['errorMarkers'], JSON_THROW_ON_ERROR))
+        ->not->toContain('private-request-body', 'private-xhr-body', 'https://other.example');
+
+    foreach ($result['errorMarkers'] as $marker) {
+        expect(array_keys($marker))->toBe(['type', 'timestamp', 'data'])
+            ->and(array_keys($marker['data']['payload']))->toBe(['method', 'path', 'status']);
+    }
+});
+
+it('does not install a service worker or navigation handoff', function (): void {
+    expect(reelRecorderSource())
+        ->not->toContain('serviceWorker.register')
+        ->not->toContain('navigator.serviceWorker');
 });
 
 it('leaves host rendering unchanged when reel is unconfigured or grant issuance throws', function (): void {

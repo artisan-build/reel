@@ -144,8 +144,18 @@ it('ignores a browser supplied session id and records a bounded expiring server 
         ->and(array_keys($issued))->toBe(array_slice($serverIds, -3));
 
     foreach ($issued as $entry) {
-        expect($entry['expires_at'])->toBeGreaterThan(time());
+        expect($entry['expires_at'])->toBeGreaterThan(time())
+            ->and(array_keys($entry))->toBe(['expires_at', 'issued_at', 'last_active_at', 'path']);
     }
+});
+
+it('does not retain query strings or fragments in issuance activity paths', function (): void {
+    $response = $this->postJson(route('reel.session-grants.store'), [
+        'consent' => true,
+        'path' => '/checkout?token=private#fragment',
+    ])->assertOk();
+
+    expect(session('reel.issued_sessions')[$response->json('session_id')]['path'])->toBeNull();
 });
 
 it('rejects none and symmetric algorithm substitutions', function (): void {
@@ -218,30 +228,36 @@ it('rejects an hs256 grant signed with the rsa public key as its hmac secret', f
 
 it('evicts expired session ids when adding a new issuance', function (): void {
     $session = $this->app['session']->driver();
+    $expired = str_repeat('1', 64);
+    $active = str_repeat('2', 64);
+    $new = str_repeat('3', 64);
     $session->put('reel.issued_sessions', [
-        'expired-session' => ['expires_at' => time() - 1, 'issued_at' => time() - 20],
-        'active-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
+        $expired => ['expires_at' => time() - 1, 'issued_at' => time() - 20],
+        $active => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
     ]);
 
-    (new IssuedSessionSet)->add($session, 'new-session', time() + 120, 5);
+    (new IssuedSessionSet)->add($session, $new, time() + 120, 5);
 
     expect($session->get('reel.issued_sessions'))
-        ->not->toHaveKey('expired-session')
-        ->toHaveKeys(['active-session', 'new-session']);
+        ->not->toHaveKey($expired)
+        ->toHaveKeys([$active, $new]);
 });
 
 it('evicts the oldest issued session id when the bound is exceeded', function (): void {
     $session = $this->app['session']->driver();
+    $oldest = str_repeat('4', 64);
+    $newer = str_repeat('5', 64);
+    $new = str_repeat('6', 64);
     $session->put('reel.issued_sessions', [
-        'oldest-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 20],
-        'newer-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
+        $oldest => ['expires_at' => time() + 60, 'issued_at' => time() - 20],
+        $newer => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
     ]);
 
-    (new IssuedSessionSet)->add($session, 'new-session', time() + 120, 2);
+    (new IssuedSessionSet)->add($session, $new, time() + 120, 2);
 
     expect(array_keys($session->get('reel.issued_sessions')))
-        ->toBe(['newer-session', 'new-session'])
-        ->not->toContain('oldest-session');
+        ->toBe([$newer, $new])
+        ->not->toContain($oldest);
 });
 
 it('rejects wrong audience issuer and expired grants', function (): void {

@@ -23,8 +23,21 @@ globalThis.document = {
     visibilityState: 'visible',
     addEventListener: function () {}
 };
-globalThis.location = { origin: 'https://host.example' };
+globalThis.location = { origin: 'https://host.example', pathname: '/start' };
 globalThis.addEventListener = function () {};
+
+globalThis.Headers = class {
+    constructor(values) {
+        this.values = {};
+        if (values instanceof globalThis.Headers) {
+            Object.assign(this.values, values.values);
+        } else if (values && typeof values === 'object') {
+            Object.keys(values).forEach((name) => { this.values[name.toLowerCase()] = String(values[name]); });
+        }
+    }
+    set(name, value) { this.values[String(name).toLowerCase()] = String(value); }
+    get(name) { return this.values[String(name).toLowerCase()] || null; }
+};
 
 const reelStorage = new Map();
 globalThis.sessionStorage = {
@@ -109,9 +122,24 @@ globalThis.crypto = {
 
 const reelUploads = [];
 let reelGrantRequests = 0;
-const reelHostFetchResult = { ok: true, status: 204, headers: { get: function () { return null; } } };
+const reelBody = 'byte-identical-response-body';
+function reelResponse(status, responseHeaders) {
+    return {
+        ok: status >= 200 && status < 300,
+        status: status,
+        bodyUsed: false,
+        headers: {
+            get: function (name) { return (responseHeaders || {})[String(name).toLowerCase()] || null; }
+        },
+        text: function () { this.bodyUsed = true; return Promise.resolve(reelBody); }
+    };
+}
+const reelHostFetchResults = [];
+const reelRejectedError = new Error('host-fetch-rejected');
+const reelRejectedFetchResult = Promise.reject(reelRejectedError);
+reelRejectedFetchResult.catch(function () {});
 const reelHostFetchCalls = [];
-globalThis.fetch = function (url, options) {
+function reelOriginalFetch(url, options) {
     if (url === '/grant') {
         reelGrantRequests += 1;
         return Promise.resolve({
@@ -131,28 +159,60 @@ globalThis.fetch = function (url, options) {
     }
     if (url === '/host-request') {
         reelHostFetchCalls.push({ receiver: this, url: url, options: options });
-        return reelHostFetchResult;
+        const result = Promise.resolve(reelResponse(204));
+        reelHostFetchResults.push(result);
+        return result;
     }
+    if (url === '/host-error') {
+        reelHostFetchCalls.push({ receiver: this, url: url, options: options });
+        return Promise.resolve(reelResponse(503));
+    }
+    if (url === '/host-server-error') {
+        reelHostFetchCalls.push({ receiver: this, url: url, options: options });
+        return Promise.resolve(reelResponse(500, { 'x-reel-server-error': '1' }));
+    }
+    if (url === 'https://other.example/error') {
+        reelHostFetchCalls.push({ receiver: this, url: url, options: options });
+        return Promise.resolve(reelResponse(500));
+    }
+    if (url === '/host-reject') return reelRejectedFetchResult;
     if (url === '/upload') reelUploads.push(JSON.parse(options.body));
     return Promise.resolve({ ok: true, status: 202, headers: { get: function () { return null; } } });
-};
+}
+globalThis.fetch = reelOriginalFetch;
 
 const reelXhrOpenResult = { operation: 'open-result' };
 const reelXhrSendResult = { operation: 'send-result' };
 const reelXhrOpenCalls = [];
 const reelXhrSendCalls = [];
-globalThis.XMLHttpRequest = function () {};
+globalThis.XMLHttpRequest = function () {
+    this._listeners = {};
+    this._headers = {};
+    this.status = 200;
+    this.responseText = 'byte-identical-xhr-body';
+};
 globalThis.XMLHttpRequest.prototype = {
-    open: function () {
+    open: function (method, url) {
+        this._url = String(url);
         reelXhrOpenCalls.push({ receiver: this, arguments: Array.from(arguments) });
         return reelXhrOpenResult;
     },
     send: function () {
         reelXhrSendCalls.push({ receiver: this, arguments: Array.from(arguments) });
+        if (this._url === '/host-xhr-error') this.status = 502;
+        if (this._url === '/host-xhr-server-error') {
+            this.status = 500;
+            this._responseHeaders = { 'x-reel-server-error': '1' };
+        }
+        if (this._url === 'https://other.example/xhr-error') this.status = 500;
+        if (this._listeners.loadend) this._listeners.loadend();
         return reelXhrSendResult;
     },
-    addEventListener: function () {},
-    getResponseHeader: function () { return null; }
+    setRequestHeader: function (name, value) { this._headers[String(name).toLowerCase()] = String(value); },
+    addEventListener: function (name, callback) { this._listeners[name] = callback; },
+    getResponseHeader: function (name) {
+        return (this._responseHeaders || {})[String(name).toLowerCase()] || null;
+    }
 };
 
 let reelRecordCalls = 0;
@@ -180,7 +240,11 @@ globalThis.reelHarness = {
     emit: function (event) { reelEmit(event); },
     grantRequests: function () { return reelGrantRequests; },
     recordCalls: function () { return reelRecordCalls; },
-    hostFetchResult: reelHostFetchResult,
+    hostFetchResults: reelHostFetchResults,
+    rejectedFetchResult: reelRejectedFetchResult,
+    rejectedError: reelRejectedError,
+    originalFetch: reelOriginalFetch,
+    responseBody: reelBody,
     hostFetchCalls: reelHostFetchCalls,
     xhrOpenResult: reelXhrOpenResult,
     xhrSendResult: reelXhrSendResult,
