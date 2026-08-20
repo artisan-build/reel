@@ -306,6 +306,7 @@ it('accepts a verified chunk and derives session authority only from its grant',
 
 it('derives indexed initial and latest paths from sanitized metadata events', function (): void {
     $context = ingestContext();
+    $grant = ingestGrant($context);
     $startedAt = now()->getTimestampMs();
     $initialEvents = [
         ...safeIngestEvents($startedAt),
@@ -321,8 +322,8 @@ it('derives indexed initial and latest paths from sanitized metadata events', fu
         'data' => ['href' => '/orders/complete'],
     ]];
 
-    postIngestEnvelope(ingestEnvelope($context, $initialEvents))->assertAccepted();
-    postIngestEnvelope(ingestEnvelope($context, $latestEvents, ['sequence' => 1]))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($context, $initialEvents, ['grant' => $grant]))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($context, $latestEvents, ['sequence' => 1, 'grant' => $grant]))->assertAccepted();
 
     $session = RecordingSession::query()->sole();
     expect($session->initial_path)->toBe('/orders')
