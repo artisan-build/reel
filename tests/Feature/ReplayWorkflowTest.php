@@ -385,6 +385,18 @@ it('never serves hostile captured DOM and returns a diagnostic without captured 
         ->not->toContain('data:text/html');
 });
 
+it('hex encodes valid captured text that could terminate the replay data element', function (): void {
+    $breakout = '</script><script>window.replayBreakout=true</script>';
+    $session = makeReplaySession(replayEvents($breakout));
+    $content = $this->actingAs(User::factory()->create())
+        ->get(signedReplayUrl($session))
+        ->assertOk()
+        ->getContent();
+
+    expect($content)->not->toContain($breakout)
+        ->and($content)->toContain('\\u003C');
+});
+
 it('shows diagnostics for missing corrupt checksum-mismatched and incompatible objects', function (string $case, string $diagnostic): void {
     $session = makeReplaySession();
     $object = $session->manifest['objects'][0];
