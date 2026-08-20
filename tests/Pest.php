@@ -42,7 +42,31 @@ expect()->extend('toBeOne', fn () => $this->toBe(1));
 |
 */
 
-function something(): void
+/**
+ * @return array{public: string, private: string}
+ */
+function testRsaKeyPair(): array
 {
-    // ..
+    static $pair;
+
+    if (is_array($pair)) {
+        return $pair;
+    }
+
+    $key = openssl_pkey_new([
+        'private_key_bits' => 2048,
+        'private_key_type' => OPENSSL_KEYTYPE_RSA,
+    ]);
+
+    if ($key === false || ! openssl_pkey_export($key, $private)) {
+        throw new RuntimeException('Unable to generate a test RSA key pair.');
+    }
+
+    $details = openssl_pkey_get_details($key);
+
+    if ($details === false) {
+        throw new RuntimeException('Unable to inspect the test RSA key pair.');
+    }
+
+    return $pair = ['public' => $details['key'], 'private' => $private];
 }

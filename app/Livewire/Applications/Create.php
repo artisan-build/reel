@@ -25,16 +25,17 @@ class Create extends Component
     {
         $this->ensureAdministrator();
 
-        [$application, $code] = DB::transaction(function () use ($issuer): array {
+        [$application, $enrollment] = DB::transaction(function () use ($issuer): array {
             $application = Application::query()->create($this->form->validatedData());
 
             return [$application, $issuer->issue($application)];
         });
 
-        session()->put('enrollment', [
+        session()->flash('enrollment', [
             'application_id' => $application->public_id,
-            'code' => $code,
+            'code' => $enrollment->code,
+            'expires_at' => $enrollment->expiresAt,
         ]);
-        $this->redirectRoute('admin.applications.show', ['application' => $application], navigate: true);
+        $this->redirectRoute('admin.applications.show', ['application' => $application]);
     }
 }

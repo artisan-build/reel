@@ -9,10 +9,13 @@ use App\Models\ApplicationCredential;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class ApplicationEnrollmentController extends Controller
 {
+    private const string FAILURE_MESSAGE = 'Enrollment failed. The code is invalid, expired, revoked, or already used.';
+
     public function store(EnrollApplicationRequest $request, Application $application): JsonResponse
     {
         abort_unless($application->ingest_enabled, 403, 'Enrollment is disabled for this application.');
@@ -22,6 +25,7 @@ class ApplicationEnrollmentController extends Controller
         $credential = DB::transaction(function () use ($application, $validated): ApplicationCredential {
             $credentials = $application->credentials()
                 ->whereNotNull('enrollment_code_hash')
+                ->where('enrollment_expires_at', '>', now())
                 ->lockForUpdate()
                 ->get();
 
@@ -31,21 +35,15 @@ class ApplicationEnrollmentController extends Controller
             ));
 
             if (! $credential instanceof ApplicationCredential) {
-                throw ValidationException::withMessages([
-                    'enrollment_code' => 'The enrollment code is invalid or has already been used.',
-                ]);
+                $this->reject($application, 'invalid_or_expired');
             }
 
             if ($credential->status === CredentialStatus::Revoked) {
-                throw ValidationException::withMessages([
-                    'enrollment_code' => 'The credential associated with this enrollment code is revoked.',
-                ]);
+                $this->reject($application, 'revoked');
             }
 
             if ($credential->enrollment_expires_at === null || $credential->enrollment_expires_at->isPast()) {
-                throw ValidationException::withMessages([
-                    'enrollment_code' => 'The enrollment code has expired.',
-                ]);
+                $this->reject($application, 'expired_after_lock');
             }
 
             $credential->update([
@@ -64,5 +62,17 @@ class ApplicationEnrollmentController extends Controller
             'application_id' => $application->public_id,
             'algorithm' => $credential->algorithm,
         ], 201);
+    }
+
+    private function reject(Application $application, string $reason): never
+    {
+        Log::notice('Application credential enrollment rejected.', [
+            'application_id' => $application->public_id,
+            'reason' => $reason,
+        ]);
+
+        throw ValidationException::withMessages([
+            'enrollment_code' => self::FAILURE_MESSAGE,
+        ]);
     }
 }

@@ -34,25 +34,31 @@ class Show extends Component
     {
         $enrollment = session('enrollment');
         $enrollmentCode = null;
+        $enrollmentExpired = false;
 
         if (is_array($enrollment)
             && ($enrollment['application_id'] ?? null) === $this->applicationId
             && is_string($enrollment['code'] ?? null)
+            && is_int($enrollment['expires_at'] ?? null)
         ) {
-            $enrollmentCode = $enrollment['code'];
             session()->forget('enrollment');
+
+            if ($enrollment['expires_at'] > now()->getTimestamp()) {
+                $enrollmentCode = $enrollment['code'];
+            } else {
+                $enrollmentExpired = true;
+            }
         }
 
         return view('livewire.applications.show', [
             'enrollmentCode' => $enrollmentCode,
+            'enrollmentExpired' => $enrollmentExpired,
         ]);
     }
 
     #[Computed]
     public function application(): Application
     {
-        $this->ensureAdministrator();
-
         return Application::query()
             ->where('public_id', $this->applicationId)
             ->with('credentials')
@@ -84,13 +90,14 @@ class Show extends Component
     {
         $this->ensureAdministrator();
         $application = $this->application();
-        $code = $issuer->issue($application);
+        $enrollment = $issuer->issue($application);
 
-        session()->put('enrollment', [
+        session()->flash('enrollment', [
             'application_id' => $application->public_id,
-            'code' => $code,
+            'code' => $enrollment->code,
+            'expires_at' => $enrollment->expiresAt,
         ]);
-        $this->redirectRoute('admin.applications.show', ['application' => $application], navigate: true);
+        $this->redirectRoute('admin.applications.show', ['application' => $application]);
     }
 
     public function revokeCredential(int $credentialId): void

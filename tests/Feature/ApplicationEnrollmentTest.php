@@ -6,11 +6,13 @@ use App\Enums\CredentialStatus;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Services\EnrollmentCodeIssuer;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 it('enrolls one public key with a hashed single use code', function (): void {
     $application = Application::factory()->create();
-    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
     $credential = $application->credentials()->sole();
     $keyPair = testRsaKeyPair();
 
@@ -45,7 +47,7 @@ it('enrolls one public key with a hashed single use code', function (): void {
 
 it('rejects an enrollment payload containing a private key', function (): void {
     $application = Application::factory()->create();
-    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -61,7 +63,7 @@ it('rejects an enrollment payload containing a private key', function (): void {
 
 it('rejects unexpected signing algorithms', function (): void {
     $application = Application::factory()->create();
-    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -84,7 +86,12 @@ it('rejects expired enrollment codes', function (): void {
         'enrollment_code' => $code,
         'algorithm' => ApplicationCredential::ALGORITHM,
         'public_key' => testRsaKeyPair()['public'],
-    ])->assertUnprocessable()->assertJsonValidationErrors('enrollment_code');
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('enrollment_code')
+        ->assertJsonPath(
+            'errors.enrollment_code.0',
+            'Enrollment failed. The code is invalid, expired, revoked, or already used.',
+        );
 
     expect($application->credentials()->sole()->status)->toBeNull();
 });
@@ -102,14 +109,19 @@ it('rejects enrollment for revoked credentials', function (): void {
         'enrollment_code' => $code,
         'algorithm' => ApplicationCredential::ALGORITHM,
         'public_key' => testRsaKeyPair()['public'],
-    ])->assertUnprocessable()->assertJsonValidationErrors('enrollment_code');
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('enrollment_code')
+        ->assertJsonPath(
+            'errors.enrollment_code.0',
+            'Enrollment failed. The code is invalid, expired, revoked, or already used.',
+        );
 
     expect($application->credentials()->sole()->status)->toBe(CredentialStatus::Revoked);
 });
 
 it('fails enrollment closed while the application kill switch is disabled', function (): void {
     $application = Application::factory()->create(['ingest_enabled' => false]);
-    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -123,7 +135,7 @@ it('fails enrollment closed while the application kill switch is disabled', func
 it('does not resolve an enrollment code across application boundaries', function (): void {
     $applicationA = Application::factory()->create();
     $applicationB = Application::factory()->create();
-    $codeB = resolve(EnrollmentCodeIssuer::class)->issue($applicationB);
+    $codeB = resolve(EnrollmentCodeIssuer::class)->issue($applicationB)->code;
 
     $this->postJson(route('applications.enrollment.store', $applicationA), [
         'enrollment_code' => $codeB,
@@ -133,4 +145,55 @@ it('does not resolve an enrollment code across application boundaries', function
 
     expect($applicationA->credentials()->count())->toBe(0)
         ->and($applicationB->credentials()->sole()->status)->toBeNull();
+});
+
+it('rate limits expensive enrollment attempts per application and IP', function (): void {
+    $application = Application::factory()->create();
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
+    $payload = [
+        'enrollment_code' => 'invalid-code',
+        'algorithm' => ApplicationCredential::ALGORITHM,
+        'public_key' => testRsaKeyPair()['public'],
+    ];
+
+    foreach (range(1, 9) as $attempt) {
+        $this->postJson(route('applications.enrollment.store', $application), $payload)
+            ->assertUnprocessable();
+    }
+
+    $this->postJson(route('applications.enrollment.store', $application), [
+        ...$payload,
+        'enrollment_code' => $code,
+    ])->assertCreated();
+
+    $this->postJson(route('applications.enrollment.store', $application), $payload)
+        ->assertTooManyRequests();
+});
+
+it('claims enrollment credentials with an expiration predicate and pessimistic lock', function (): void {
+    $application = Application::factory()->create();
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
+    $credentialQueries = [];
+
+    DB::listen(function (QueryExecuted $query) use (&$credentialQueries): void {
+        $sql = strtolower($query->sql);
+
+        if (str_starts_with(ltrim($sql), 'select') && str_contains($sql, 'application_credentials')) {
+            $credentialQueries[] = $sql;
+        }
+    });
+
+    $this->postJson(route('applications.enrollment.store', $application), [
+        'enrollment_code' => $code,
+        'algorithm' => ApplicationCredential::ALGORITHM,
+        'public_key' => testRsaKeyPair()['public'],
+    ])->assertCreated();
+
+    $claimQuery = collect($credentialQueries)
+        ->first(fn (string $sql): bool => str_contains($sql, 'enrollment_code_hash'));
+
+    expect($claimQuery)->toBeString()
+        ->toContain('enrollment_expires_at')
+        ->toContain('>')
+        ->toContain('for update');
 });

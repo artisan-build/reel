@@ -99,13 +99,13 @@ it('creates an application and displays its enrollment code exactly once', funct
         ->and($credential->toArray())->not->toHaveKey('enrollment_code_hash')
         ->and($credential->getAttribute('enrollment_code'))->toBeNull();
 
-    $this->get(route('admin.applications.show', $application))
-        ->assertOk()
-        ->assertSee($code);
+    $firstDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
 
-    $this->get(route('admin.applications.show', $application))
-        ->assertOk()
-        ->assertDontSee($code);
+    expect($firstDisplay->getContent())->toContain($code);
+
+    $secondDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
+
+    expect($secondDisplay->getContent())->not->toContain($code);
 });
 
 it('rejects policy changes below the immutable inputs baseline', function (): void {
@@ -161,6 +161,55 @@ it('does not expose admin Livewire actions when instantiated by a non administra
     Livewire::test(Create::class)->assertForbidden();
 });
 
+it('forbids every application management action for non administrators', function (): void {
+    $admin = User::factory()->admin()->create();
+    $viewer = User::factory()->create();
+    $application = Application::factory()->create();
+    $credential = ApplicationCredential::factory()->for($application)->create();
+    $actions = [
+        'updateApplication' => [],
+        'toggleIngest' => [],
+        'rotateCredential' => [],
+        'revokeCredential' => [$credential->id],
+    ];
+    $publicMethods = collect((new ReflectionClass(Show::class))->getMethods(ReflectionMethod::IS_PUBLIC))
+        ->filter(fn (ReflectionMethod $method): bool => $method->getDeclaringClass()->getName() === Show::class)
+        ->reject(fn (ReflectionMethod $method): bool => in_array($method->getName(), ['mount', 'render', 'application'], true))
+        ->map(fn (ReflectionMethod $method): string => $method->getName())
+        ->values()
+        ->all();
+
+    expect($publicMethods)->toEqualCanonicalizing(array_keys($actions));
+
+    foreach ($actions as $action => $arguments) {
+        $this->actingAs($admin);
+        $component = Livewire::test(Show::class, ['application' => $application]);
+
+        $this->actingAs($viewer);
+        $component->call($action, ...$arguments)->assertForbidden();
+    }
+});
+
+it('does not display an enrollment code after it expires', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+
+    Livewire::test(Create::class)
+        ->set('form.name', 'Delayed setup')
+        ->set('form.allowedOrigins', 'https://delayed.example.com')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $application = Application::query()->sole();
+    $code = session('enrollment.code');
+
+    $this->travel(16)->minutes();
+
+    $this->get(route('admin.applications.show', $application))
+        ->assertOk()
+        ->assertDontSeeText($code)
+        ->assertSee('Enrollment code expired');
+});
+
 it('stores no private or secret key column on application credentials', function (): void {
     expect(Schema::getColumnListing('application_credentials'))
         ->each(fn ($column) => $column->not->toMatch('/private|secret_key/i'));
@@ -194,32 +243,3 @@ it('allows overlapping credentials and revokes only the selected credential', fu
         ->and(ApplicationCredential::query()->count())->toBe(2)
         ->and(Application::query()->count())->toBe(1);
 });
-
-/**
- * @return array{public: string, private: string}
- */
-function testRsaKeyPair(): array
-{
-    static $pair;
-
-    if (is_array($pair)) {
-        return $pair;
-    }
-
-    $key = openssl_pkey_new([
-        'private_key_bits' => 2048,
-        'private_key_type' => OPENSSL_KEYTYPE_RSA,
-    ]);
-
-    if ($key === false || ! openssl_pkey_export($key, $private)) {
-        throw new RuntimeException('Unable to generate a test RSA key pair.');
-    }
-
-    $details = openssl_pkey_get_details($key);
-
-    if ($details === false) {
-        throw new RuntimeException('Unable to inspect the test RSA key pair.');
-    }
-
-    return $pair = ['public' => $details['key'], 'private' => $private];
-}

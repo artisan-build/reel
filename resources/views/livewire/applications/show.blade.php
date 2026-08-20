@@ -23,6 +23,11 @@
             <flux:text class="mt-2">{{ __('It expires in 15 minutes and will never be shown again.') }}</flux:text>
             <code class="mt-4 block overflow-x-auto rounded-lg bg-zinc-950 px-4 py-3 text-sm text-white">{{ $enrollmentCode }}</code>
         </div>
+    @elseif ($enrollmentExpired)
+        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-test="enrollment-code-expired">
+            <flux:heading>{{ __('Enrollment code expired') }}</flux:heading>
+            <flux:text class="mt-2">{{ __('The one-time code expired before it was displayed. Rotate the credential to issue a new code.') }}</flux:text>
+        </div>
     @endif
 
     <section class="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900">
