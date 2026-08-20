@@ -467,6 +467,7 @@ it('finalizes an abandoned gapped session as visibly incomplete', function (): v
     $session->refresh();
     expect($session->status)->toBe(RecordingSessionStatus::Compacting)
         ->and($session->is_complete)->toBeFalse()
+        ->and($session->duration_seconds)->toBeGreaterThanOrEqual(60)
         ->and($session->gap_count)->toBe(1)
         ->and($session->concurrent_epoch_count)->toBe(1)
         ->and($session->incomplete_reasons)->toContain('sequence_gaps:epoch-1')

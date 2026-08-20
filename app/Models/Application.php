@@ -60,6 +60,18 @@ class Application extends Model
         return $this->hasMany(RecordingSession::class);
     }
 
+    /** @return HasMany<RecordingMarker, $this> */
+    public function recordingMarkers(): HasMany
+    {
+        return $this->hasMany(RecordingMarker::class);
+    }
+
+    /** @return HasMany<ReplayView, $this> */
+    public function replayViews(): HasMany
+    {
+        return $this->hasMany(ReplayView::class);
+    }
+
     #[\Override]
     public function getRouteKeyName(): string
     {

@@ -139,6 +139,7 @@ class ChunkIngestor
                 $issuedAt,
                 $expiresAt,
                 $maxEventTime,
+                $events,
             );
         } catch (IngestRejected $rejection) {
             if (in_array($rejection->reason, [
@@ -402,6 +403,7 @@ class ChunkIngestor
     /**
      * @param  array<string, mixed>  $envelope
      * @param  array<string, int>  $ceilings
+     * @param  list<array<string, mixed>>  $events
      */
     private function persist(
         Application $application,
@@ -415,6 +417,7 @@ class ChunkIngestor
         DateTimeInterface $issuedAt,
         DateTimeInterface $expiresAt,
         int $maxEventTime,
+        array $events,
     ): ChunkIngestResult {
         return DB::transaction(function () use (
             $application,
@@ -428,6 +431,7 @@ class ChunkIngestor
             $issuedAt,
             $expiresAt,
             $maxEventTime,
+            $events,
         ): ChunkIngestResult {
             $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
 
@@ -595,6 +599,8 @@ class ChunkIngestor
                 $session->forceFill(['max_reorder_distance' => $reorderDistance])->save();
             }
 
+            $this->recordPaths($session, $events);
+
             return new ChunkIngestResult(false, $origin);
         }, 3);
     }
@@ -689,6 +695,54 @@ class ChunkIngestor
         ]);
 
         return $epoch;
+    }
+
+    /** @param list<array<string, mixed>> $events */
+    private function recordPaths(RecordingSession $session, array $events): void
+    {
+        $paths = [];
+
+        foreach ($events as $event) {
+            $data = $event['data'] ?? null;
+
+            if (($event['type'] ?? null) !== 4
+                || ! is_int($event['timestamp'] ?? null)
+                || ! is_array($data)
+                || ! is_string($data['href'] ?? null)
+                || $data['href'] === '') {
+                continue;
+            }
+
+            $paths[] = [
+                'path' => mb_substr($data['href'], 0, 255),
+                'timestamp' => $event['timestamp'],
+            ];
+        }
+
+        if ($paths === []) {
+            return;
+        }
+
+        usort($paths, fn (array $left, array $right): int => $left['timestamp'] <=> $right['timestamp']);
+        $first = $paths[0];
+        $last = $paths[array_key_last($paths)];
+        $attributes = [];
+
+        if ($session->initial_path_recorded_at === null
+            || $first['timestamp'] < $session->initial_path_recorded_at) {
+            $attributes['initial_path'] = $first['path'];
+            $attributes['initial_path_recorded_at'] = $first['timestamp'];
+        }
+
+        if ($session->latest_path_recorded_at === null
+            || $last['timestamp'] >= $session->latest_path_recorded_at) {
+            $attributes['latest_path'] = $last['path'];
+            $attributes['latest_path_recorded_at'] = $last['timestamp'];
+        }
+
+        if ($attributes !== []) {
+            $session->forceFill($attributes)->save();
+        }
     }
 
     /**

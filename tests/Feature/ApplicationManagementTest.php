@@ -53,8 +53,7 @@ it('stores the complete application policy behind an opaque public route key', f
 it('guards every application administration route from guests and non administrators', function (): void {
     $application = Application::factory()->create();
     $adminRoutes = collect(Route::getRoutes()->getRoutes())
-        ->filter(fn (RoutingRoute $route): bool => $route->uri() === 'applications'
-            || str_starts_with($route->uri(), 'applications/'))
+        ->filter(fn (RoutingRoute $route): bool => str_starts_with((string) $route->getName(), 'admin.applications.'))
         ->values();
 
     expect($adminRoutes->pluck('action.as')->all())->toEqualCanonicalizing([
