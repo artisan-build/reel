@@ -32,9 +32,8 @@ final readonly class SessionGrantVerifier
             $token = $configuration->parser()->parse($grant);
 
             if (! $token instanceof Plain
-                || $token->headers()->get('typ') !== SessionGrant::TYPE
-                || $token->headers()->get('alg') !== SessionGrant::ALGORITHM) {
-                throw new DomainException('The Reel grant type or algorithm is invalid.');
+                || $token->headers()->get('typ') !== SessionGrant::TYPE) {
+                throw new DomainException('The Reel grant type is invalid.');
             }
 
             $valid = $configuration->validator()->validate($token,

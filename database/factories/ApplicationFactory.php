@@ -22,6 +22,11 @@ class ApplicationFactory extends Factory
             'excluded_paths' => [],
             'sampling_percent' => 100,
             'ingest_enabled' => true,
+            'max_new_sessions_per_day' => 1_000,
+            'max_concurrent_sessions' => 100,
+            'max_chunks_per_session' => 360,
+            'max_compressed_bytes_per_session' => 64 * 1024 * 1024,
+            'max_compressed_chunk_bytes' => 256 * 1024,
         ];
     }
 }

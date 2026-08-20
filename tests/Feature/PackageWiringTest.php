@@ -12,15 +12,15 @@ it('registers the Reel client package', function (): void {
     $this->assertNotNull(config('reel'));
 });
 
-it('keeps the Reel client as a development-only path dependency', function (): void {
+it('installs the shared Reel protocol package at runtime for ingest verification', function (): void {
     $composer = json_decode(
         file_get_contents(base_path('composer.json')),
         true,
         flags: JSON_THROW_ON_ERROR,
     );
 
-    expect($composer['require'])->not->toHaveKey('artisan-build/reel-client')
-        ->and($composer['require-dev'])->toHaveKey('artisan-build/reel-client', '*')
+    expect($composer['require'])->toHaveKey('artisan-build/reel-client', '*')
+        ->and($composer['require-dev'])->not->toHaveKey('artisan-build/reel-client')
         ->and($composer['repositories'])->toContain([
             'type' => 'path',
             'url' => 'packages/reel-client',
