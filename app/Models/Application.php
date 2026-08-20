@@ -28,6 +28,7 @@ class Application extends Model
     /** @use HasFactory<ApplicationFactory> */
     use HasFactory;
 
+    #[\Override]
     protected static function booted(): void
     {
         static::creating(function (Application $application): void {

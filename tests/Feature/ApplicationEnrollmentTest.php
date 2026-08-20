@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Hash;
 
 it('enrolls one public key with a hashed single use code', function (): void {
     $application = Application::factory()->create();
-    $code = app(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
     $credential = $application->credentials()->sole();
     $keyPair = testRsaKeyPair();
 
@@ -45,7 +45,7 @@ it('enrolls one public key with a hashed single use code', function (): void {
 
 it('rejects an enrollment payload containing a private key', function (): void {
     $application = Application::factory()->create();
-    $code = app(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -61,7 +61,7 @@ it('rejects an enrollment payload containing a private key', function (): void {
 
 it('rejects unexpected signing algorithms', function (): void {
     $application = Application::factory()->create();
-    $code = app(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -109,7 +109,7 @@ it('rejects enrollment for revoked credentials', function (): void {
 
 it('fails enrollment closed while the application kill switch is disabled', function (): void {
     $application = Application::factory()->create(['ingest_enabled' => false]);
-    $code = app(EnrollmentCodeIssuer::class)->issue($application);
+    $code = resolve(EnrollmentCodeIssuer::class)->issue($application);
 
     $this->postJson(route('applications.enrollment.store', $application), [
         'enrollment_code' => $code,
@@ -123,7 +123,7 @@ it('fails enrollment closed while the application kill switch is disabled', func
 it('does not resolve an enrollment code across application boundaries', function (): void {
     $applicationA = Application::factory()->create();
     $applicationB = Application::factory()->create();
-    $codeB = app(EnrollmentCodeIssuer::class)->issue($applicationB);
+    $codeB = resolve(EnrollmentCodeIssuer::class)->issue($applicationB);
 
     $this->postJson(route('applications.enrollment.store', $applicationA), [
         'enrollment_code' => $codeB,
