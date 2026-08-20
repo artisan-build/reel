@@ -26,12 +26,15 @@ profile the repository is the application scaffold and its quality gate only —
 - `composer ready` REWRITES files (ide-helper, Rector, Pint). Run it, commit whatever it changed as
   the ride-along commit below, and only then verify the gate on a clean tree — a dirty tree after
   `ready` is not a pass.
-- extra suites: none. There are no path packages yet (see monorepo).
-- monorepo: no — a single Laravel application, no `packages/` and no path repositories.
-  PRD §16 step 2 introduces `artisan-build/reel-client`. Whether that package lives here as a path
-  package with a `kibble:split` release (the hone/matte convention) or in its own repository is an
-  OPEN decision for that PR. Whoever resolves it updates this field, adds the per-package suites to
-  the gate, and adds the package job to CI.
+- extra suites: `packages/reel-client/tests` runs through `composer test` after the application suite.
+- monorepo: yes — the Reel application is the Laravel Cloud deployable and does not need the client
+  package at runtime, so `artisan-build/reel-client` is an in-repo path repository required only in
+  root `require-dev`. Production `composer install --no-dev` is unaffected, while keeping the package
+  in-repo lets its standalone suite run in the same CI execution as the application. Release/split
+  automation is deferred until the client is ready to distribute.
+- CI constraint: fold package coverage into the existing `composer test` execution. Do not add a new
+  CI job, rename the `ci` or `quality` jobs, or change the PHP matrix because branch protection pins
+  the literal `ci (8.4)`, `ci (8.5)`, and `quality` contexts.
 - requires a running PostgreSQL server. The suite uses a real `reel_app_test` database
   (`phpunit.xml`), not SQLite.
 - `composer audit` is network-dependent and blocking: a newly published advisory can fail the gate
@@ -120,8 +123,8 @@ not strictly related to the work at hand.**
 - `main` is protected: push a branch, open a PR, let CI go green, then `gh pr merge --squash`.
   Direct pushes to `main` are rejected for everyone, admins included.
 - release / split steps: none today. Reel is deployed by the Built for Cloud control plane
-  forking/connecting this repository, not by tagging a package. Revisit if `reel-client` becomes a
-  path package here (see monorepo).
+  forking/connecting this repository. `reel-client` is currently an in-repo path package; release and
+  split automation is deferred until the client is ready to distribute.
 
 ## Plan & coordination
 - plan location: `docs/product/reel-prd.md` — the in-repo, decision-complete PRD. It is authoritative;

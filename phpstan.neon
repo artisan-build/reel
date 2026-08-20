@@ -5,6 +5,7 @@ includes:
 parameters:
     paths:
         - app/
+        - packages/reel-client/src/
     excludePaths:
         - **/*Test.php
     scanFiles:
