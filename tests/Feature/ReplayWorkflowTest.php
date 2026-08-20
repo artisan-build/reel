@@ -307,8 +307,8 @@ it('uses the exact opaque-origin sandbox and no-referrer iframe attributes', fun
         ->assertOk()
         ->getContent();
 
-    preg_match('/<iframe[^>]*\ssandbox="([^"]*)"[^>]*>/s', $content, $sandbox);
-    preg_match('/<iframe[^>]*\sreferrerpolicy="([^"]*)"[^>]*>/s', $content, $referrer);
+    preg_match('/<iframe[^>]*\ssandbox="([^"]*)"[^>]*>/s', (string) $content, $sandbox);
+    preg_match('/<iframe[^>]*\sreferrerpolicy="([^"]*)"[^>]*>/s', (string) $content, $referrer);
 
     expect($sandbox[1] ?? null)->toBe('allow-scripts')
         ->and($referrer[1] ?? null)->toBe('no-referrer');
@@ -323,8 +323,8 @@ it('issues a distinct per-player channel nonce on each detail response', functio
     ]);
     $first = $this->actingAs($viewer)->get($url)->getContent();
     $second = $this->get($url)->getContent();
-    preg_match('/([a-f0-9]{96})/', $first, $firstNonce);
-    preg_match('/([a-f0-9]{96})/', $second, $secondNonce);
+    preg_match('/([a-f0-9]{96})/', (string) $first, $firstNonce);
+    preg_match('/([a-f0-9]{96})/', (string) $second, $secondNonce);
 
     expect($firstNonce[1] ?? null)->toMatch('/^[a-f0-9]{96}$/')
         ->and($secondNonce[1] ?? null)->toMatch('/^[a-f0-9]{96}$/')
@@ -336,7 +336,7 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
     $session = makeReplaySession(replayEvents('Visible safe content'));
     $response = $this->actingAs($viewer)->get(signedReplayUrl($session))->assertOk();
     $content = $response->getContent();
-    preg_match('/nonce="([a-f0-9]{48})"/', $content, $nonce);
+    preg_match('/nonce="([a-f0-9]{48})"/', (string) $content, $nonce);
 
     expect($nonce[1] ?? null)->toBeString()
         ->and($response->headers->get('Content-Security-Policy'))->toBe(
@@ -399,7 +399,7 @@ it('shows diagnostics for missing corrupt checksum-mismatched and incompatible o
         });
     } elseif ($case === 'checksum') {
         $bytes = Storage::disk('local')->get($object['key']);
-        Storage::disk('local')->put($object['key'], substr($bytes, 0, -1).chr(ord(substr($bytes, -1)) ^ 1));
+        Storage::disk('local')->put($object['key'], substr((string) $bytes, 0, -1).chr(ord(substr((string) $bytes, -1)) ^ 1));
     } elseif ($case === 'trailing') {
         $bytes = Storage::disk('local')->get($object['key']).'trailing';
         Storage::disk('local')->put($object['key'], $bytes);

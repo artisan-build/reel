@@ -158,7 +158,7 @@ class Index extends Component
             ->whereDoesntHave('replayViews', fn (Builder $views): Builder => $views
                 ->where('user_id', $viewerId)));
 
-        return $query->orderByDesc('started_at')->paginate(25);
+        return $query->latest('started_at')->paginate(25);
     }
 
     /** @param Builder<RecordingSession> $query */

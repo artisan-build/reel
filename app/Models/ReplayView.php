@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @mixin IdeHelperReplayView
+ */
 #[Fillable(['user_id', 'application_id', 'recording_session_id', 'viewed_at'])]
 class ReplayView extends Model
 {

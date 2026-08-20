@@ -6,6 +6,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @mixin IdeHelperRecordingMarker
+ */
 #[Fillable([
     'application_id',
     'recording_session_id',

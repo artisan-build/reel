@@ -34,7 +34,7 @@ class ReplaySessionController extends Controller
             ],
         );
         $reasons = is_array($recording->incomplete_reasons)
-            ? array_values(array_filter($recording->incomplete_reasons, 'is_string'))
+            ? array_values(array_filter($recording->incomplete_reasons, is_string(...)))
             : [];
         $uncertaintyReasons = array_values(array_filter(
             $reasons,
