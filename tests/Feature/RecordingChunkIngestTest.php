@@ -304,6 +304,33 @@ it('accepts a verified chunk and derives session authority only from its grant',
     Storage::disk('local')->assertExists($chunk->object_key);
 });
 
+it('derives indexed initial and latest paths from sanitized metadata events', function (): void {
+    $context = ingestContext();
+    $startedAt = now()->getTimestampMs();
+    $initialEvents = [
+        ...safeIngestEvents($startedAt),
+        [
+            'type' => 4,
+            'timestamp' => $startedAt + 1,
+            'data' => ['href' => '/orders'],
+        ],
+    ];
+    $latestEvents = [[
+        'type' => 4,
+        'timestamp' => $startedAt + 2,
+        'data' => ['href' => '/orders/complete'],
+    ]];
+
+    postIngestEnvelope(ingestEnvelope($context, $initialEvents))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($context, $latestEvents, ['sequence' => 1]))->assertAccepted();
+
+    $session = RecordingSession::query()->sole();
+    expect($session->initial_path)->toBe('/orders')
+        ->and($session->latest_path)->toBe('/orders/complete')
+        ->and($session->initial_path_recorded_at)->toBe($startedAt + 1)
+        ->and($session->latest_path_recorded_at)->toBe($startedAt + 2);
+});
+
 it('rejects forged signatures before inserts queue dispatches or object writes', function (): void {
     Queue::fake();
     $context = ingestContext();

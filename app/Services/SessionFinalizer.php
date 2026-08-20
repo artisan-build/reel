@@ -74,10 +74,12 @@ class SessionFinalizer
                 }
 
                 [$gapCount, $concurrentEpochCount, $reasons] = $this->completeness($session);
+                $endedAt = now();
                 $session->forceFill([
                     'status' => RecordingSessionStatus::Compacting,
-                    'status_changed_at' => now(),
-                    'ended_at' => now(),
+                    'status_changed_at' => $endedAt,
+                    'ended_at' => $endedAt,
+                    'duration_seconds' => max(0, (int) $session->started_at->diffInSeconds($endedAt)),
                     'is_complete' => $reasons === [],
                     'incomplete_reasons' => $reasons,
                     'gap_count' => $gapCount,

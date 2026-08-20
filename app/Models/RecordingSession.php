@@ -41,6 +41,15 @@ use Illuminate\Support\Facades\DB;
     'gap_count',
     'max_reorder_distance',
     'concurrent_epoch_count',
+    'initial_path',
+    'latest_path',
+    'initial_path_recorded_at',
+    'latest_path_recorded_at',
+    'application_user_id',
+    'release_id',
+    'duration_seconds',
+    'protected_at',
+    'protected_by',
 ])]
 class RecordingSession extends Model
 {
@@ -72,6 +81,30 @@ class RecordingSession extends Model
     public function epochs(): HasMany
     {
         return $this->hasMany(RecordingEpoch::class);
+    }
+
+    /** @return HasMany<RecordingMarker, $this> */
+    public function markers(): HasMany
+    {
+        return $this->hasMany(RecordingMarker::class);
+    }
+
+    /** @return HasMany<ReplayView, $this> */
+    public function replayViews(): HasMany
+    {
+        return $this->hasMany(ReplayView::class);
+    }
+
+    /** @return BelongsTo<User, $this> */
+    public function protectionOwner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'protected_by');
+    }
+
+    #[\Override]
+    public function getRouteKeyName(): string
+    {
+        return 'session_id';
     }
 
     public function recordInitialTransition(string $reason, int $attempt = 1): void
@@ -156,6 +189,10 @@ class RecordingSession extends Model
             'incomplete_reasons' => 'array',
             'manifest' => 'array',
             'compacted_at' => 'immutable_datetime',
+            'initial_path_recorded_at' => 'integer',
+            'latest_path_recorded_at' => 'integer',
+            'duration_seconds' => 'integer',
+            'protected_at' => 'immutable_datetime',
         ];
     }
 }
