@@ -13,11 +13,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Symfony\Component\HttpFoundation\Response;
 
-final class CorrelateReelRequest
+final readonly class CorrelateReelRequest
 {
     public function __construct(
-        private readonly IssuedSessionSet $issuedSessions,
-        private readonly Reel $reel,
+        private IssuedSessionSet $issuedSessions,
+        private Reel $reel,
     ) {}
 
     public function handle(Request $request, Closure $next): Response

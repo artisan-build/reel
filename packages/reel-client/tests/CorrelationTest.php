@@ -45,18 +45,14 @@ beforeEach(function (): void {
         'reel.correlation.approximate_window_seconds' => 300,
     ]);
 
-    Route::middleware('web')->get('/reel-test/correlation', function (Request $request) {
-        return response()->json([
-            'reel' => Context::get('reel'),
-            'binding' => $request->attributes->get(Correlation::BINDING_ATTRIBUTE),
-            'rejection' => $request->attributes->get(Correlation::REJECTION_ATTRIBUTE),
-            'request_headers' => $request->headers->all(),
-        ]);
-    });
+    Route::middleware('web')->get('/reel-test/correlation', fn (Request $request) => response()->json([
+        'reel' => Context::get('reel'),
+        'binding' => $request->attributes->get(Correlation::BINDING_ATTRIBUTE),
+        'rejection' => $request->attributes->get(Correlation::REJECTION_ATTRIBUTE),
+        'request_headers' => $request->headers->all(),
+    ]));
     Route::middleware('web')->get('/reel-test/correlation/failure', fn () => response('failed', 500));
-    Route::middleware(['web', 'reel.hidden'])->get('/reel-test/correlation/hidden', function () {
-        return response()->json(['reel' => Context::get('reel')], 500);
-    });
+    Route::middleware(['web', 'reel.hidden'])->get('/reel-test/correlation/hidden', fn () => response()->json(['reel' => Context::get('reel')], 500));
     Route::middleware('web')->get('/reel-test/correlation/exception', function (): never {
         throw new ReelCorrelationTestException('private exception message');
     });
