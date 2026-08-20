@@ -14,7 +14,8 @@ profile the repository is the application scaffold and its quality gate only —
   2. an independent quality review and an independent acceptance judge both pass (see harness map —
      different model lineages from the implementer); and
   3. GitHub Actions CI is green on that SHA.
-  No human PR code review.
+  No human PR code review. Condition 3 is also enforced mechanically by branch protection on `main`
+  (see CI), so a red or missing check blocks the merge button regardless of coordinator behavior.
 - merge method: `gh pr merge --squash`
 
 ## Hard gate (must be green before review; coordinator verifies on the committed SHA, clean tree)
@@ -46,6 +47,25 @@ profile the repository is the application scaffold and its quality gate only —
     Check-only on purpose: a CI run of `composer lint` rewrites files nothing commits, so it can
     never fail and is not a gate.
 - both trigger on push and pull_request against `main`.
+- **`main` is protected and these three checks are REQUIRED** (verified via the branch-protection
+  API on 2026-08-20):
+  - required contexts, all pinned to the GitHub Actions app (id 15368): `ci (8.4)`, `ci (8.5)`,
+    `quality`. These are job names, not workflow names.
+  - `strict: true` — a branch must be up to date with `main` before it can merge. Expect to update
+    or rebase a PR branch that fell behind, and re-wait for its checks, before `gh pr merge --squash`.
+  - `enforce_admins: true` — admins get no bypass, so this genuinely gates everyone.
+  - zero required human reviews: `required_pull_request_reviews` is unset entirely, which is what
+    keeps Mode A autonomous. `restrictions` is unset too — no push allowlist.
+  - `allow_force_pushes: false`, `allow_deletions: false`. Linear history and conversation
+    resolution are deliberately NOT required.
+  - squash merging remains enabled on the repository, so the declared merge method still works.
+- ⚠️ **The required contexts are literal strings.** Renaming the `ci`/`quality` jobs, or changing the
+  PHP matrix in `tests.yml`, produces checks that do not match `ci (8.4)` / `ci (8.5)` / `quality` —
+  the old contexts then never report and EVERY PR blocks forever. Any PR touching those job names or
+  the matrix must update the branch protection contexts in the same change.
+- ⚠️ **Nothing can be pushed straight to `main` any more.** A fresh commit has no checks, so the push
+  is rejected. All work — including one-line profile, docs, or CI edits — goes through a branch and a
+  squash-merged PR.
 - CI needs NO repository or organization secrets. `livewire/flux` resolves free from Packagist —
   verified by a clean install with no `auth.json` and empty `COMPOSER_AUTH`. If `livewire/flux-pro`
   is ever added it WILL need `FLUX_USERNAME` / `FLUX_LICENSE_KEY`, and those org secrets are
@@ -97,6 +117,8 @@ not strictly related to the work at hand.**
 - PR target repo: `artisan-build/reel`, branch `main`. **Never** open a PR against
   `artisan-build/laravel-nodeless` — that is the starter kit this app was scaffolded from, not this
   project.
+- `main` is protected: push a branch, open a PR, let CI go green, then `gh pr merge --squash`.
+  Direct pushes to `main` are rejected for everyone, admins included.
 - release / split steps: none today. Reel is deployed by the Built for Cloud control plane
   forking/connecting this repository, not by tagging a package. Revisit if `reel-client` becomes a
   path package here (see monorepo).
