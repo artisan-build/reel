@@ -15,14 +15,23 @@ it('adds a guarded boolean admin flag defaulting to false', function (): void {
 
     $this->assertSame(false, $user->is_admin);
 
-    $guardedUser = User::factory()->create(['is_admin' => true]);
+    $guardedUser = User::query()->create([
+        'name' => 'Guarded User',
+        'email' => 'guarded@example.com',
+        'password' => 'password',
+        'is_admin' => true,
+    ]);
+    $guardedUser->refresh();
 
     $this->assertSame(false, $guardedUser->is_admin);
+    $this->assertNotSame(true, (new User)->fill(['is_admin' => true])->is_admin);
 
     $guardedUser->is_admin = true;
     $guardedUser->save();
 
     $this->assertSame(true, $guardedUser->refresh()->is_admin);
+    $this->assertSame(true, User::factory()->admin()->create()->is_admin);
+    $this->assertNotContains('is_admin', (new User)->getFillable());
 });
 
 it('creates the first administrator without persisting a bootstrap secret', function (): void {

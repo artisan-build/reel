@@ -39,15 +39,6 @@ class User extends Authenticatable implements PasskeyUser
         ];
     }
 
-    #[\Override]
-    protected static function booted(): void
-    {
-        // Factories run unguarded, so privilege is only grantable after the user exists.
-        static::creating(function (self $user): void {
-            $user->is_admin = false;
-        });
-    }
-
     /**
      * Get the user's initials
      */
