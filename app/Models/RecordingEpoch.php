@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * @mixin IdeHelperRecordingEpoch
  */
-#[Fillable(['recording_session_id', 'epoch_id', 'failure_code'])]
+#[Fillable(['recording_session_id', 'epoch_id', 'failure_code', 'terminal_sequence'])]
 class RecordingEpoch extends Model
 {
     /** @return BelongsTo<RecordingSession, $this> */
@@ -51,6 +51,9 @@ class RecordingEpoch extends Model
     #[\Override]
     protected function casts(): array
     {
-        return ['status' => RecordingEpochStatus::class];
+        return [
+            'status' => RecordingEpochStatus::class,
+            'ordinal' => 'integer',
+        ];
     }
 }

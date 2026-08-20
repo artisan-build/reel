@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\FinalizeRecordingSessions;
 use App\Console\Commands\Fresh;
 use App\Console\Commands\InstallFluxPro;
 use App\Console\Commands\OptimizeTailwind;
@@ -17,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withCommands([
         Fresh::class,
+        FinalizeRecordingSessions::class,
         InstallFluxPro::class,
         OptimizeTailwind::class,
     ])
