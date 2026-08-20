@@ -95,7 +95,7 @@ class SessionFinalizer
             });
 
             if ($didFinalize) {
-                CompactRecordingSession::dispatch((int) $id);
+                dispatch(new CompactRecordingSession((int) $id));
                 $finalized++;
             }
         }

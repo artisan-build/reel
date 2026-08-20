@@ -75,7 +75,7 @@ class RecordingCompactor
                 Str::uuid().'.jsonl.gz',
             ]);
             [$candidateChecksum, $candidateBytes] = $this->writeCandidate($disk, $session, $candidateKey);
-            CompactionCandidateWritten::dispatch($recordingSessionId, $candidateKey);
+            event(new CompactionCandidateWritten($recordingSessionId, $candidateKey));
             $this->verifyCandidate($disk, $candidateKey, $candidateChecksum, $candidateBytes, $session);
 
             $eventStartedAt = $session->chunks()->min('event_started_at');
@@ -103,7 +103,7 @@ class RecordingCompactor
 
             $this->manifestReader->read($manifest, $manifestChecksum, $session);
 
-            CompactionCandidateVerified::dispatch($recordingSessionId, $candidateKey);
+            event(new CompactionCandidateVerified($recordingSessionId, $candidateKey));
 
             $publication = DB::transaction(function () use (
                 $recordingSessionId,
@@ -150,7 +150,7 @@ class RecordingCompactor
             });
 
             if ($publication !== 'published') {
-                CleanupCompactionCandidate::dispatch($diskName, $candidateKey);
+                dispatch(new CleanupCompactionCandidate($diskName, $candidateKey));
 
                 if ($publication === 'duplicate') {
                     $this->counters->increment('compaction_noop_duplicates');
@@ -160,11 +160,11 @@ class RecordingCompactor
             }
 
             $published = true;
-            CompactionPublished::dispatch($recordingSessionId);
+            event(new CompactionPublished($recordingSessionId));
             $this->removeTemporaryChunks($disk, $session);
         } catch (Throwable $exception) {
             if ($candidateKey !== null && ! $published) {
-                CleanupCompactionCandidate::dispatch($diskName, $candidateKey);
+                dispatch(new CleanupCompactionCandidate($diskName, $candidateKey));
             }
 
             throw $exception;

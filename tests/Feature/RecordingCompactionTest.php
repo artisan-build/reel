@@ -128,10 +128,10 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
     ]);
     $temporaryKeys = $session->chunks()->pluck('object_key')->all();
 
-    app(RecordingCompactor::class)->compact($session->getKey());
+    resolve(RecordingCompactor::class)->compact($session->getKey());
 
     $session->refresh();
-    $manifest = app(ReplayManifest::class)->read($session->manifest, $session->manifest_checksum);
+    $manifest = resolve(ReplayManifest::class)->read($session->manifest, $session->manifest_checksum);
     $object = $manifest['objects'][0];
     $decoded = gzdecode(Storage::disk('local')->get($object['key']));
     $lines = array_values(array_filter(explode("\n", (string) $decoded)));
@@ -147,8 +147,8 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
             'reason' => 'manifest_published',
         ])
         ->and($labels)->toBe(['a-0', 'a-1', 'b-0'])
-        ->and($object['checksum'])->toBe(hash('sha256', Storage::disk('local')->get($object['key'])))
-        ->and($object['bytes'])->toBe(strlen(Storage::disk('local')->get($object['key'])))
+        ->and($object['checksum'])->toBe(hash('sha256', (string) Storage::disk('local')->get($object['key'])))
+        ->and($object['bytes'])->toBe(strlen((string) Storage::disk('local')->get($object['key'])))
         ->and($session->chunks()->whereNull('purged_at')->count())->toBe(0);
 
     foreach ($temporaryKeys as $temporaryKey) {
@@ -157,7 +157,7 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
 });
 
 it('reads a valid ordered two object manifest', function (): void {
-    $reader = app(ReplayManifest::class);
+    $reader = resolve(ReplayManifest::class);
     $manifest = [
         'manifest_version' => 1,
         'envelope_version' => Envelope::VERSION,
@@ -184,7 +184,7 @@ it('reads a valid ordered two object manifest', function (): void {
 
 it('makes a duplicate compaction job a no-op without creating another object', function (): void {
     $session = createCompactionFixture();
-    $compactor = app(RecordingCompactor::class);
+    $compactor = resolve(RecordingCompactor::class);
     $job = new CompactRecordingSession($session->getKey());
     $job->handle($compactor);
     $firstFiles = Storage::disk('local')->allFiles();
@@ -213,7 +213,7 @@ it('lets deletion win the locked publication race and schedules candidate cleanu
             ->transitionTo(RecordingSessionStatus::Deleting, 'concurrent_deletion');
     });
 
-    app(RecordingCompactor::class)->compact($session->getKey());
+    resolve(RecordingCompactor::class)->compact($session->getKey());
 
     $session->refresh();
     expect($session->status)->toBe(RecordingSessionStatus::Deleting)
@@ -230,7 +230,7 @@ it('detects candidate and persisted manifest checksum failures', function (): vo
         Storage::disk('local')->put($event->candidateKey, 'corrupt-candidate');
     });
 
-    expect(fn () => app(RecordingCompactor::class)->compact($candidateSession->getKey()))
+    expect(fn () => resolve(RecordingCompactor::class)->compact($candidateSession->getKey()))
         ->toThrow(RuntimeException::class, 'candidate failed verification');
     expect($candidateSession->fresh()->candidate_checksum_failure_count)->toBe(1)
         ->and(DB::table('operational_counters')->where('metric', 'candidate_checksum_failures')->value('value'))->toBe(1)
@@ -238,12 +238,12 @@ it('detects candidate and persisted manifest checksum failures', function (): vo
 
     Event::forget(CompactionCandidateWritten::class);
     $manifestSession = createCompactionFixture();
-    app(RecordingCompactor::class)->compact($manifestSession->getKey());
+    resolve(RecordingCompactor::class)->compact($manifestSession->getKey());
     $manifestSession->refresh();
     $tampered = $manifestSession->manifest;
     $tampered['gap_count']++;
 
-    expect(fn () => app(ReplayManifest::class)->read(
+    expect(fn () => resolve(ReplayManifest::class)->read(
         $tampered,
         $manifestSession->manifest_checksum,
         $manifestSession,
@@ -259,7 +259,7 @@ it('never candidate-cleans a published object and resumes interrupted chunk clea
         throw new RuntimeException('post-publication cleanup interruption');
     });
 
-    expect(fn () => app(RecordingCompactor::class)->compact($session->getKey()))
+    expect(fn () => resolve(RecordingCompactor::class)->compact($session->getKey()))
         ->toThrow(RuntimeException::class, 'cleanup interruption');
 
     $session->refresh();
@@ -269,7 +269,7 @@ it('never candidate-cleans a published object and resumes interrupted chunk clea
     Storage::disk('local')->assertExists($temporaryKey);
 
     Event::forget(CompactionPublished::class);
-    app(RecordingCompactor::class)->compact($session->getKey());
+    resolve(RecordingCompactor::class)->compact($session->getKey());
 
     Storage::disk('local')->assertExists($publishedKey);
     Storage::disk('local')->assertMissing($temporaryKey);
@@ -295,7 +295,7 @@ it('finalizes an abandoned gapped session as visibly incomplete', function (): v
         'event_ended_at' => 2_000,
     ]);
     $session->forceFill(['updated_at' => now()->subMinutes(2)])->saveQuietly();
-    $finalizer = app(SessionFinalizer::class);
+    $finalizer = resolve(SessionFinalizer::class);
 
     expect($finalizer->closeAbandonedSessions())->toBe(1)
         ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Closing);
@@ -315,7 +315,7 @@ it('finalizes an abandoned gapped session as visibly incomplete', function (): v
         ->and($session->incomplete_reasons)->toContain('failed_epoch:privacy-failed')
         ->and($session->incomplete_reasons)->toContain('missing_terminal_sequence:privacy-failed');
 
-    app(RecordingCompactor::class)->compact($session->getKey());
+    resolve(RecordingCompactor::class)->compact($session->getKey());
     $session->refresh();
     expect($session->manifest['incomplete'])->toBeTrue()
         ->and($session->manifest['gap_count'])->toBe(1)
@@ -374,9 +374,9 @@ it('returns the operational counters covered by compaction and finalization', fu
         'manifest_checksum_failure_count' => 1,
         'status_changed_at' => now()->subHour(),
     ])->save();
-    app(OperationalCounters::class)->increment('late_upload_rejections', 2);
+    resolve(OperationalCounters::class)->increment('late_upload_rejections', 2);
 
-    $snapshot = app(OperationalCounters::class)->snapshot(60);
+    $snapshot = resolve(OperationalCounters::class)->snapshot(60);
 
     expect($snapshot)->toMatchArray([
         'gap_count' => 2,
@@ -398,7 +398,7 @@ it('really queues compaction on the database connection before a worker handles 
     config()->set('queue.default', 'database');
     $session = createCompactionFixture();
 
-    CompactRecordingSession::dispatch($session->getKey());
+    dispatch(new CompactRecordingSession($session->getKey()));
 
     expect(DB::table('jobs')->count())->toBe(1)
         ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Compacting)

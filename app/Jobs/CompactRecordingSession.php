@@ -22,6 +22,6 @@ class CompactRecordingSession implements ShouldQueue
 
     public function failed(?Throwable $exception): void
     {
-        app(RecordingCompactor::class)->markFailed($this->recordingSessionId);
+        resolve(RecordingCompactor::class)->markFailed($this->recordingSessionId);
     }
 }
