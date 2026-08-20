@@ -52,6 +52,12 @@ jobs:
       - name: Generate Application Key
         run: php artisan key:generate
 
+      - name: Install JavaScriptCore for recorder tests
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libjavascriptcoregtk-4.1-bin || sudo apt-get install -y libjavascriptcoregtk-4.0-bin
+
       - name: Run PHPStan
         run: composer stan
 
