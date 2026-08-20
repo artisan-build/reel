@@ -1047,6 +1047,7 @@ it('fails an epoch after privacy rejection and refuses its later chunks', functi
     postIngestEnvelope(ingestEnvelope($context, $unsafe, ['sequence' => 1, 'grant' => $grant]))
         ->assertUnprocessable()
         ->assertJsonPath('reason', 'unsafe_attribute');
+    expectStoredChunksToExclude(['SECRET']);
 
     postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 2, 'grant' => $grant]))
         ->assertConflict()
