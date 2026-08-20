@@ -39,6 +39,7 @@ class User extends Authenticatable implements PasskeyUser
         ];
     }
 
+    #[\Override]
     protected static function booted(): void
     {
         // Factories run unguarded, so privilege is only grantable after the user exists.

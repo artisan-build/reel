@@ -8,6 +8,7 @@ use Illuminate\Support\ServiceProvider;
 
 final class ReelClientServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/reel.php', 'reel');
