@@ -251,6 +251,34 @@ function insertConcurrentTestSession(array $context): int
     ]);
 }
 
+/** @return list<string> */
+function decodedStoredChunks(): array
+{
+    return RecordingChunk::query()->orderBy('id')->get()
+        ->map(function (RecordingChunk $chunk): string {
+            $compressed = Storage::disk('local')->get($chunk->object_key);
+            $decoded = gzdecode($compressed);
+
+            if ($decoded === false) {
+                throw new RuntimeException('A stored test chunk is not valid gzip.');
+            }
+
+            return $decoded;
+        })
+        ->all();
+}
+
+/** @param list<string> $sentinels */
+function expectStoredChunksToExclude(array $sentinels): void
+{
+    $stored = decodedStoredChunks();
+    expect($stored)->not->toBeEmpty();
+
+    foreach ($sentinels as $sentinel) {
+        expect(implode("\n", $stored))->not->toContain($sentinel);
+    }
+}
+
 beforeEach(function (): void {
     Storage::fake('local');
     config()->set('filesystems.default', 'local');
@@ -567,112 +595,123 @@ it('keeps existing data when the application kill switch stops later ingest', fu
     Storage::disk('local')->assertExists($storedKey);
 });
 
-it('rejects every authoritative forbidden privacy class before temporary storage', function (Closure $fixture): void {
+it('rejects every authoritative forbidden privacy class before temporary storage', function (
+    Closure $fixture,
+    string $reason,
+    array $sentinels,
+): void {
     $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
     $events = $fixture(safeIngestEvents());
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
 
-    postIngestEnvelope(ingestEnvelope($context, $events))->assertUnprocessable();
+    expectStoredChunksToExclude($sentinels);
+    $response->assertUnprocessable()->assertJsonPath('reason', $reason);
 
-    expect(RecordingChunk::query()->count())->toBe(0)
-        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+    expect(RecordingChunk::query()->count())->toBe(1);
 })->with([
-    'unmasked input/select/textarea including hidden' => function (array $events): array {
+    'unmasked input/select/textarea including hidden' => [function (array $events): array {
         $events[0]['data']['node']['childNodes'] = [[
-            'type' => 2,
-            'tagName' => 'input',
-            'attributes' => ['type' => 'hidden', 'value' => 'input-secret'],
-            'childNodes' => [],
+            'type' => 2, 'id' => 10, 'tagName' => 'input',
+            'attributes' => ['type' => 'hidden', 'value' => 'input-secret'], 'childNodes' => [],
         ]];
 
         return $events;
-    },
-    'contenteditable text' => function (array $events): array {
+    }, 'unmasked_form_value', ['input-secret']],
+    'contenteditable text' => [function (array $events): array {
         $events[0]['data']['node']['childNodes'] = [[
-            'type' => 2,
-            'tagName' => 'div',
-            'attributes' => ['contenteditable' => 'true'],
-            'childNodes' => [['type' => 3, 'textContent' => 'editable-secret']],
+            'type' => 2, 'id' => 10, 'tagName' => 'div', 'attributes' => ['contenteditable' => 'true'],
+            'childNodes' => [['type' => 3, 'id' => 11, 'textContent' => 'editable-secret']],
         ]];
 
         return $events;
-    },
-    'incremental unmasked form value' => fn (array $events): array => [[
-        'type' => 3,
-        'timestamp' => $events[0]['timestamp'],
-        'data' => [
-            'source' => 0,
-            'attributes' => [['id' => 20, 'attributes' => ['value' => 'dynamic-input-secret']]],
-        ],
-    ]],
-    'incremental contenteditable value' => fn (array $events): array => [[
-        'type' => 3,
-        'timestamp' => $events[0]['timestamp'],
+    }, 'unmasked_contenteditable_text', ['editable-secret']],
+    'incremental unmasked form value' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 20, 'tagName' => 'input',
+            'attributes' => ['type' => 'text', 'value' => '***'], 'childNodes' => [],
+        ]];
+        $events[] = [
+            'type' => 3, 'timestamp' => $events[0]['timestamp'],
+            'data' => ['source' => 0, 'attributes' => [['id' => 20, 'attributes' => ['value' => 'dynamic-input-secret']]]],
+        ];
+
+        return $events;
+    }, 'unmasked_form_value', ['dynamic-input-secret']],
+    'incremental contenteditable value' => [fn (array $events): array => [[
+        'type' => 3, 'timestamp' => $events[0]['timestamp'],
         'data' => ['source' => 5, 'id' => 21, 'text' => 'dynamic-editable-secret'],
-    ]],
-    'Livewire snapshot and initial data plus Inertia data page' => function (array $events): array {
+    ]], 'unmasked_form_value', ['dynamic-editable-secret']],
+    'Livewire snapshot and initial data plus Inertia data page' => [function (array $events): array {
         $events[0]['data']['node']['attributes']['wire:snapshot'] = 'livewire-secret';
         $events[0]['data']['node']['attributes']['wire:initial-data'] = 'legacy-secret';
         $events[0]['data']['node']['attributes']['data-page'] = 'inertia-secret';
 
         return $events;
-    },
-    'incremental framework hydration attribute' => fn (array $events): array => [[
-        'type' => 3,
-        'timestamp' => $events[0]['timestamp'],
-        'data' => [
-            'source' => 0,
-            'attributes' => [['id' => 22, 'attributes' => ['wire:snapshot' => 'dynamic-livewire-secret']]],
-        ],
-    ]],
-    'page and navigation query strings and fragments' => fn (array $events): array => [[
-        'type' => 4,
-        'timestamp' => $events[0]['timestamp'],
-        'data' => ['href' => '/account?token=secret#private'],
-    ]],
-    'navigation resource and CSS URL references' => function (array $events): array {
-        $events[0]['data']['node']['attributes']['href'] = 'https://private.example/account';
-        $events[0]['data']['node']['attributes']['style'] = 'background: url(https://private.example/a.png)';
-
-        return $events;
-    },
-    'incremental resource URL' => fn (array $events): array => [[
-        'type' => 3,
-        'timestamp' => $events[0]['timestamp'],
-        'data' => ['source' => 0, 'url' => 'https://private.example/resource'],
-    ]],
-    'data URL and base64 media' => function (array $events): array {
-        $events[0]['data']['media'] = 'data:image/png;base64,c2VjcmV0';
-
-        return $events;
-    },
-    'blocked media element' => function (array $events): array {
+    }, 'unsafe_attribute', ['livewire-secret', 'legacy-secret', 'inertia-secret']],
+    'incremental framework hydration attribute' => [function (array $events): array {
         $events[0]['data']['node']['childNodes'] = [[
-            'type' => 2,
-            'tagName' => 'canvas',
-            'attributes' => [],
-            'childNodes' => [],
+            'type' => 2, 'id' => 22, 'tagName' => 'div', 'attributes' => [], 'childNodes' => [],
+        ]];
+        $events[] = [
+            'type' => 3, 'timestamp' => $events[0]['timestamp'],
+            'data' => ['source' => 0, 'attributes' => [['id' => 22, 'attributes' => ['wire:snapshot' => 'dynamic-livewire-secret']]]],
+        ];
+
+        return $events;
+    }, 'unsafe_attribute', ['dynamic-livewire-secret']],
+    'page and navigation query strings and fragments' => [fn (array $events): array => [[
+        'type' => 4, 'timestamp' => $events[0]['timestamp'],
+        'data' => ['href' => '/account?token=page-secret#private'],
+    ]], 'unsafe_page_url', ['page-secret']],
+    'navigation resource attribute' => [function (array $events): array {
+        $events[0]['data']['node']['attributes']['href'] = 'https://private.example/account-secret';
+
+        return $events;
+    }, 'unsafe_attribute', ['account-secret']],
+    'inline CSS URL reference' => [function (array $events): array {
+        $events[0]['data']['node']['attributes']['style'] = 'background:url(https://private.example/css-secret.png)';
+
+        return $events;
+    }, 'unsafe_css_function', ['css-secret']],
+    'incremental resource attribute' => [function (array $events): array {
+        $events[] = [
+            'type' => 3, 'timestamp' => $events[0]['timestamp'],
+            'data' => ['source' => 0, 'attributes' => [['id' => 1, 'attributes' => ['imagesrcset' => 'resource-secret']]]],
+        ];
+
+        return $events;
+    }, 'unsafe_attribute', ['resource-secret']],
+    'data URL and base64 media' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'][0]['textContent'] = 'prefix data:image/png;base64,media-secret';
+
+        return $events;
+    }, 'data_url_media', ['media-secret']],
+    'blocked media element' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 30, 'tagName' => 'canvas', 'attributes' => [], 'childNodes' => [],
         ]];
 
         return $events;
-    },
-    'cookies storage and authorization headers' => function (array $events): array {
-        $events[0]['data']['headers'] = ['Authorization' => 'Bearer secret'];
-        $events[0]['data']['cookies'] = 'session=secret';
-        $events[0]['data']['localStorage'] = ['token' => 'secret'];
+    }, 'blocked_media_element', ['canvas']],
+    'cookies storage and authorization headers' => [function (array $events): array {
+        $events[0]['data']['headers'] = ['Authorization' => 'Bearer auth-secret'];
+        $events[0]['data']['cookies'] = 'session=cookie-secret';
+        $events[0]['data']['localStorage'] = ['token' => 'storage-secret'];
 
         return $events;
-    },
-    'request and response bodies' => function (array $events): array {
-        $events[0]['data']['requestBody'] = 'password=secret';
-        $events[0]['data']['responseBody'] = '{"token":"secret"}';
+    }, 'unknown_field', ['auth-secret', 'cookie-secret', 'storage-secret']],
+    'request and response bodies' => [function (array $events): array {
+        $events[0]['data']['requestBody'] = 'password=request-secret';
+        $events[0]['data']['responseBody'] = '{"token":"response-secret"}';
 
         return $events;
-    },
-    'console arguments' => fn (array $events): array => [[
-        'type' => 6,
-        'timestamp' => $events[0]['timestamp'],
-        'data' => ['plugin' => 'rrweb/console@1', 'args' => ['secret']],
-    ]],
+    }, 'unknown_field', ['request-secret', 'response-secret']],
+    'console arguments' => [fn (array $events): array => [[
+        'type' => 6, 'timestamp' => $events[0]['timestamp'],
+        'data' => ['plugin' => 'rrweb/console@1', 'args' => ['console-secret']],
+    ]], 'unknown_event_type', ['console-secret']],
 ]);
 
 it('leaves the monitored application response unchanged when ingest fails', function (): void {
@@ -688,56 +727,292 @@ it('leaves the monitored application response unchanged when ingest fails', func
 
 it('rejects unknown event-level fields instead of scanning only event data', function (string $field): void {
     $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
     $events = safeIngestEvents();
-    $events[0][$field] = 'SECRET';
+    $events[0][$field] = 'event-field-secret';
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
 
-    postIngestEnvelope(ingestEnvelope($context, $events))
-        ->assertUnprocessable()
-        ->assertJsonPath('accepted', false);
+    expectStoredChunksToExclude(['event-field-secret']);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'unknown_field');
 
-    expect(RecordingChunk::query()->count())->toBe(0)
-        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+    expect(RecordingChunk::query()->count())->toBe(1);
 })->with(['requestBody', 'cookies', 'wire:snapshot', 'unknown']);
 
-it('fails closed on malformed node discriminators and canonicalized names', function (Closure $mutate): void {
+it('fails closed on malformed node discriminators and canonicalized names', function (
+    Closure $mutate,
+    string $reason,
+    string $sentinel,
+): void {
     $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
     $events = safeIngestEvents();
     $mutate($events);
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
 
-    postIngestEnvelope(ingestEnvelope($context, $events))->assertUnprocessable();
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', $reason);
 
-    expect(RecordingChunk::query()->count())->toBe(0)
-        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+    expect(RecordingChunk::query()->count())->toBe(1);
 })->with([
-    'string node discriminator' => function (array &$events): void {
+    'string node discriminator' => [function (array &$events): void {
         $events[0]['data']['node']['type'] = '2';
-    },
-    'string node discriminator with hydration data' => function (array &$events): void {
+        $events[0]['data']['node']['childNodes'][0]['textContent'] = 'discriminator-secret';
+    }, 'invalid_node_type', 'discriminator-secret'],
+    'string node discriminator with hydration data' => [function (array &$events): void {
         $events[0]['data']['node']['type'] = '2';
-        $events[0]['data']['node']['attributes']['wire:snapshot'] = 'SECRET';
-    },
-    'padded input tag' => function (array &$events): void {
+        $events[0]['data']['node']['attributes']['wire:snapshot'] = 'hydration-discriminator-secret';
+    }, 'invalid_node_type', 'hydration-discriminator-secret'],
+    'padded input tag' => [function (array &$events): void {
         $events[0]['data']['node']['tagName'] = 'input ';
-        $events[0]['data']['node']['attributes']['value'] = 'SECRET';
-    },
-    'entity encoded hydration attribute' => function (array &$events): void {
-        $events[0]['data']['node']['attributes']['wire&#58;snapshot'] = 'SECRET';
-    },
+        $events[0]['data']['node']['attributes']['value'] = 'padded-input-secret';
+    }, 'unmasked_form_value', 'padded-input-secret'],
+    'entity encoded hydration attribute' => [function (array &$events): void {
+        $events[0]['data']['node']['attributes']['wire&#58;snapshot'] = 'entity-hydration-secret';
+    }, 'unsafe_attribute', 'entity-hydration-secret'],
 ]);
 
-it('rejects canonicalized CSS network references', function (string $style): void {
+it('rejects canonicalized CSS network references', function (string $style, string $reason, string $sentinel): void {
     $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
     $events = safeIngestEvents();
     $events[0]['data']['node']['attributes']['style'] = $style;
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
 
-    postIngestEnvelope(ingestEnvelope($context, $events))->assertUnprocessable();
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', $reason);
 
-    expect(RecordingChunk::query()->count())->toBe(0)
-        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+    expect(RecordingChunk::query()->count())->toBe(1);
 })->with([
-    'escaped url function' => 'background:\75\72\6c(https://private.example/a.png)',
-    'comment-separated import' => '@import/**/"https://private.example/a.css"',
+    'escaped url function' => ['background:\75\72\6c(https://private.example/escaped-css-secret.png)', 'unsafe_css_function', 'escaped-css-secret'],
+    'comment-separated import' => ['@import/**/"https://private.example/import-css-secret.css"', 'unsafe_css_at_rule', 'import-css-secret'],
 ]);
+
+it('derives CSS text context from the trusted tree rather than isStyle', function (Closure $fixture, string $sentinel): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = $fixture(safeIngestEvents());
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'unsafe_css_function');
+})->with([
+    'full snapshot false flag' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 40, 'tagName' => 'style', 'attributes' => [],
+            'childNodes' => [[
+                'type' => 3, 'id' => 41, 'isStyle' => false,
+                'textContent' => 'background:image-set("style-false-secret")',
+            ]],
+        ]];
+
+        return $events;
+    }, 'style-false-secret'],
+    'full snapshot omitted flag' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 42, 'tagName' => 'style', 'attributes' => [],
+            'childNodes' => [[
+                'type' => 3, 'id' => 43,
+                'textContent' => 'background:image-set("style-omitted-secret")',
+            ]],
+        ]];
+
+        return $events;
+    }, 'style-omitted-secret'],
+    'mutation addition false flag' => [function (array $events): array {
+        $events[] = [
+            'type' => 3, 'timestamp' => $events[0]['timestamp'],
+            'data' => [
+                'source' => 0,
+                'adds' => [[
+                    'parentId' => 1,
+                    'nextId' => null,
+                    'node' => [
+                        'type' => 2, 'id' => 44, 'tagName' => 'style', 'attributes' => [],
+                        'childNodes' => [[
+                            'type' => 3, 'id' => 45, 'isStyle' => false,
+                            'textContent' => 'background:image-set("style-add-secret")',
+                        ]],
+                    ],
+                ]],
+            ],
+        ];
+
+        return $events;
+    }, 'style-add-secret'],
+    'tracked mutation text' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 46, 'tagName' => 'style', 'attributes' => [],
+            'childNodes' => [['type' => 3, 'id' => 47, 'isStyle' => false, 'textContent' => 'color:red']],
+        ]];
+        $events[] = [
+            'type' => 3, 'timestamp' => $events[0]['timestamp'],
+            'data' => [
+                'source' => 0,
+                'texts' => [['id' => 47, 'value' => 'background:image-set("style-text-secret")']],
+            ],
+        ];
+
+        return $events;
+    }, 'style-text-secret'],
+]);
+
+it('treats isStyle as type-checked data rather than trusted CSS context', function (): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $events[0]['data']['node']['childNodes'][0]['isStyle'] = true;
+    $events[0]['data']['node']['childNodes'][0]['textContent'] = 'ordinary image-set("visible-text")';
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    expect(implode("\n", decodedStoredChunks()))->toContain('visible-text');
+});
+
+it('fails closed when a text mutation has no trusted parent context', function (): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = [[
+        'type' => 3,
+        'timestamp' => now()->getTimestampMs(),
+        'data' => [
+            'source' => 0,
+            'texts' => [['id' => 999, 'value' => 'image-set("ambiguous-context-secret")']],
+        ],
+    ]];
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+
+    expectStoredChunksToExclude(['ambiguous-context-secret']);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'invalid_text_mutation');
+});
+
+it('rejects every non-allowlisted attribute', function (string $attribute): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = safeIngestEvents();
+    $sentinel = $attribute.'-attribute-secret';
+    $events[0]['data']['node']['attributes'][$attribute] = $sentinel;
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'unsafe_attribute');
+})->with(['imagesrcset', 'imagesizes', 'ping', 'content', 'codebase', 'archive', 'xml:base']);
+
+it('rejects fetching CSS functions on every CSS-bearing surface', function (Closure $fixture, string $sentinel): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = $fixture(safeIngestEvents());
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'unsafe_css_function');
+})->with([
+    'style attribute' => [function (array $events): array {
+        $events[0]['data']['node']['attributes']['style'] = 'background:image-set("style-attribute-secret")';
+
+        return $events;
+    }, 'style-attribute-secret'],
+    'rrweb css text attribute' => [function (array $events): array {
+        $events[0]['data']['node']['attributes']['_cssText'] = 'background:-webkit-image-set("css-text-secret")';
+
+        return $events;
+    }, 'css-text-secret'],
+    'SVG presentation attribute' => [function (array $events): array {
+        $events[0]['data']['node']['tagName'] = 'svg';
+        $events[0]['data']['node']['attributes']['fill'] = 'image-set("svg-fill-secret")';
+
+        return $events;
+    }, 'svg-fill-secret'],
+    'style element text' => [function (array $events): array {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 50, 'tagName' => 'style', 'attributes' => [],
+            'childNodes' => [[
+                'type' => 3, 'id' => 51, 'textContent' => '.x{background:image-set("style-node-secret")}',
+            ]],
+        ]];
+
+        return $events;
+    }, 'style-node-secret'],
+    'stylesheet rule mutation' => [fn (array $events): array => [[
+        'type' => 3, 'timestamp' => $events[0]['timestamp'],
+        'data' => [
+            'source' => 8, 'id' => 1,
+            'adds' => [['rule' => '.x{background:image-set("rule-secret")}', 'index' => 0]],
+        ],
+    ]], 'rule-secret'],
+    'style declaration mutation' => [fn (array $events): array => [[
+        'type' => 3, 'timestamp' => $events[0]['timestamp'],
+        'data' => [
+            'source' => 13, 'id' => 1, 'index' => 0,
+            'set' => ['property' => 'background', 'value' => 'image-set("declaration-secret")'],
+        ],
+    ]], 'declaration-secret'],
+    'adopted stylesheet mutation' => [fn (array $events): array => [[
+        'type' => 3, 'timestamp' => $events[0]['timestamp'],
+        'data' => [
+            'source' => 15, 'id' => 1, 'styleIds' => [2],
+            'styles' => [[
+                'styleId' => 2,
+                'rules' => [['rule' => '.x{background:-webkit-image-set("adopted-secret")}', 'index' => 0]],
+            ]],
+        ],
+    ]], 'adopted-secret'],
+]);
+
+it('rejects every CSS function outside the explicit allowlist', function (string $function): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = safeIngestEvents();
+    $sentinel = trim($function, '-').'function-secret';
+    $events[0]['data']['node']['attributes']['style'] = 'background:'.$function.'("'.$sentinel.'")';
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', 'unsafe_css_function');
+})->with([
+    'image-set', '-webkit-image-set', 'src', 'element', 'cross-fade', '-moz-element', 'future-fetch',
+]);
+
+it('rejects applet tags and data URLs anywhere in CSS values', function (string $case): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $events = safeIngestEvents();
+
+    if ($case === 'applet') {
+        $events[0]['data']['node']['childNodes'] = [[
+            'type' => 2, 'id' => 60, 'tagName' => 'applet', 'attributes' => [], 'childNodes' => [],
+        ]];
+        $reason = 'blocked_media_element';
+        $sentinel = 'applet';
+    } else {
+        $events[0]['data']['node']['attributes']['style'] = 'color:red;--asset:prefix data:image/png;base64,mid-css-secret';
+        $reason = 'data_url_media';
+        $sentinel = 'mid-css-secret';
+    }
+
+    $response = postIngestEnvelope(ingestEnvelope($context, $events, ['sequence' => 1, 'grant' => $grant]));
+    expectStoredChunksToExclude([$sentinel]);
+    $response->assertUnprocessable()->assertJsonPath('reason', $reason);
+})->with(['applet', 'mid-value data URI']);
+
+it('accepts only the short CSS function allowlist in trusted CSS contexts', function (): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $events[0]['data']['node']['attributes']['style'] = 'width:calc(100% - 2px);background:linear-gradient(rgb(1, 2, 3), hsl(0 0% 100%))';
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    expect(implode("\n", decodedStoredChunks()))
+        ->toContain('linear-gradient')
+        ->not->toContain('image-set');
+});
 
 it('rejects gzip data with unvalidated trailing bytes', function (): void {
     $context = ingestContext();
@@ -770,7 +1045,8 @@ it('fails an epoch after privacy rejection and refuses its later chunks', functi
     $unsafe = safeIngestEvents();
     $unsafe[0]['data']['node']['attributes']['wire:snapshot'] = 'SECRET';
     postIngestEnvelope(ingestEnvelope($context, $unsafe, ['sequence' => 1, 'grant' => $grant]))
-        ->assertUnprocessable();
+        ->assertUnprocessable()
+        ->assertJsonPath('reason', 'unsafe_attribute');
 
     postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 2, 'grant' => $grant]))
         ->assertConflict()

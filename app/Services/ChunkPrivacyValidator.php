@@ -8,24 +8,98 @@ use Normalizer;
 class ChunkPrivacyValidator
 {
     /** @var list<string> */
-    private const array HYDRATION_ATTRIBUTES = ['data-page', 'wire:snapshot', 'wire:initial-data'];
-
-    /** @var list<string> */
-    private const array RESOURCE_ATTRIBUTES = [
-        'href', 'url', 'src', 'srcset', 'action', 'formaction', 'poster', 'data', 'cite', 'background',
-        'xlink:href', 'srcdoc',
-    ];
-
-    /** @var list<string> */
-    private const array BLOCKED_TAGS = [
-        'canvas', 'video', 'audio', 'iframe', 'object', 'embed', 'source', 'track',
-    ];
-
-    /** @var list<string> */
     private const array MASKED_TAGS = ['input', 'select', 'textarea'];
+
+    /** @var list<string> */
+    private const array ALLOWED_TAGS = [
+        'html', 'head', 'body', 'style', 'title',
+        'address', 'article', 'aside', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'main', 'nav', 'section', 'blockquote', 'div', 'hr', 'li', 'menu', 'ol', 'p', 'pre', 'ul',
+        'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em', 'i', 'kbd',
+        'mark', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup',
+        'time', 'u', 'var', 'wbr', 'area', 'map', 'del', 'ins',
+        'button', 'datalist', 'fieldset', 'form', 'input', 'label', 'legend', 'meter', 'optgroup',
+        'option', 'output', 'progress', 'select', 'textarea',
+        'caption', 'col', 'colgroup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
+        'details', 'dialog', 'summary', 'img', 'picture',
+        'svg', 'g', 'path', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'rect', 'text',
+        'defs', 'clippath', 'mask', 'use', 'symbol', 'lineargradient', 'radialgradient', 'stop',
+    ];
+
+    /** @var list<string> */
+    private const array GLOBAL_ATTRIBUTES = [
+        'class', 'id', 'role', 'hidden', 'dir', 'lang', 'tabindex', 'width', 'height',
+        'style', '_csstext', 'data-reel-blocked', 'data-reel-mask', 'contenteditable',
+    ];
+
+    /** @var array<string, list<string>> */
+    private const array TAG_ATTRIBUTES = [
+        'a' => ['target', 'rel'],
+        'button' => ['type', 'disabled', 'name', 'value'],
+        'col' => ['span'],
+        'colgroup' => ['span'],
+        'data' => ['value'],
+        'del' => ['datetime'],
+        'details' => ['open'],
+        'dialog' => ['open'],
+        'fieldset' => ['disabled', 'name'],
+        'form' => ['method', 'name', 'novalidate'],
+        'input' => ['type', 'value', 'checked', 'disabled', 'multiple', 'name', 'placeholder', 'autocomplete', 'min', 'max', 'step'],
+        'ins' => ['datetime'],
+        'label' => ['for'],
+        'li' => ['value'],
+        'meter' => ['value', 'min', 'max', 'low', 'high', 'optimum'],
+        'ol' => ['reversed', 'start', 'type'],
+        'optgroup' => ['disabled', 'label'],
+        'option' => ['disabled', 'label', 'selected', 'value'],
+        'output' => ['for', 'name'],
+        'progress' => ['value', 'max'],
+        'select' => ['disabled', 'multiple', 'name', 'required', 'size', 'value'],
+        'td' => ['colspan', 'rowspan', 'headers'],
+        'textarea' => ['disabled', 'name', 'placeholder', 'readonly', 'required', 'rows', 'cols', 'value'],
+        'th' => ['abbr', 'colspan', 'rowspan', 'headers', 'scope'],
+        'time' => ['datetime'],
+        'img' => ['alt', 'width', 'height'],
+        'svg' => ['viewbox', 'preserveaspectratio', 'fill', 'stroke'],
+        'g' => ['fill', 'stroke', 'transform'],
+        'path' => ['d', 'fill', 'stroke', 'transform'],
+        'circle' => ['cx', 'cy', 'r', 'fill', 'stroke'],
+        'ellipse' => ['cx', 'cy', 'rx', 'ry', 'fill', 'stroke'],
+        'line' => ['x1', 'x2', 'y1', 'y2', 'stroke'],
+        'polyline' => ['points', 'fill', 'stroke'],
+        'polygon' => ['points', 'fill', 'stroke'],
+        'rect' => ['x', 'y', 'rx', 'ry', 'width', 'height', 'fill', 'stroke'],
+        'text' => ['x', 'y', 'dx', 'dy', 'fill', 'stroke'],
+        'stop' => ['offset', 'stop-color', 'stop-opacity'],
+        'lineargradient' => ['x1', 'x2', 'y1', 'y2', 'gradientunits', 'gradienttransform'],
+        'radialgradient' => ['cx', 'cy', 'r', 'fx', 'fy', 'gradientunits', 'gradienttransform'],
+    ];
+
+    /** @var list<string> */
+    private const array ALLOWED_CSS_FUNCTIONS = [
+        'attr', 'calc', 'clamp', 'min', 'max', 'var', 'env',
+        'rgb', 'rgba', 'hsl', 'hsla', 'hwb', 'lab', 'lch', 'oklab', 'oklch', 'color', 'color-mix',
+        'linear-gradient', 'radial-gradient', 'conic-gradient', 'repeating-linear-gradient',
+        'repeating-radial-gradient', 'repeating-conic-gradient',
+        'cubic-bezier', 'steps', 'matrix', 'matrix3d', 'translate', 'translatex', 'translatey',
+        'translatez', 'translate3d', 'scale', 'scalex', 'scaley', 'scalez', 'scale3d', 'rotate',
+        'rotatex', 'rotatey', 'rotatez', 'rotate3d', 'skew', 'skewx', 'skewy', 'perspective',
+        'counter', 'counters', 'rect', 'polygon', 'circle', 'ellipse', 'inset', 'path',
+    ];
+
+    /** @var list<string> */
+    private const array CSS_VALUE_ATTRIBUTES = [
+        'style', '_csstext', 'fill', 'stroke', 'transform', 'stop-color', 'stop-opacity',
+        'gradienttransform',
+    ];
+
+    /** @var array<int, string> */
+    private array $nodeContexts = [];
 
     public function validate(mixed $events): void
     {
+        $this->nodeContexts = [];
+
         if (! is_array($events) || ! array_is_list($events) || $events === []) {
             $this->reject('invalid_event_batch');
         }
@@ -95,9 +169,11 @@ class ChunkPrivacyValidator
         if (array_key_exists('href', $data)) {
             $href = $this->canonicalString($data['href']);
 
-            if (str_contains($href, '?') || str_contains($href, '#') || preg_match('/^\s*data:/i', $href) === 1) {
+            if (str_contains($href, '?') || str_contains($href, '#')) {
                 $this->reject('unsafe_page_url');
             }
+
+            $this->assertNoDataUrl($href);
         }
 
         $this->assertNumericFields($data, array_values(array_intersect(['width', 'height'], array_keys($data))));
@@ -163,7 +239,10 @@ class ChunkPrivacyValidator
                 $this->reject('invalid_node_addition');
             }
 
-            $this->validateNode($addition['node'] ?? null, false);
+            $parentContext = is_int($addition['parentId'] ?? null)
+                ? ($this->nodeContexts[$addition['parentId']] ?? null)
+                : null;
+            $this->validateNode($addition['node'] ?? null, false, $parentContext);
         }
 
         foreach ($this->optionalList($data, 'removes') as $removal) {
@@ -177,18 +256,30 @@ class ChunkPrivacyValidator
             $this->assertOnlyKeys($text, ['id', 'value']);
             $this->assertIntegerFields($text, ['id']);
 
-            if (! is_string($text['value'] ?? null)) {
+            $context = is_int($text['id'] ?? null) ? ($this->nodeContexts[$text['id']] ?? null) : null;
+
+            if (! is_string($text['value'] ?? null) || $context === null) {
                 $this->reject('invalid_text_mutation');
             }
 
-            $this->assertNoDataUrl($text['value']);
+            if ($context === 'style') {
+                $this->assertSafeCss($text['value']);
+            } else {
+                $this->assertNoDataUrl($text['value']);
+            }
         }
 
         foreach ($this->optionalList($data, 'attributes') as $mutation) {
             $this->assertObject($mutation, 'invalid_attribute_mutation');
             $this->assertOnlyKeys($mutation, ['id', 'attributes']);
             $this->assertIntegerFields($mutation, ['id']);
-            $this->validateAttributes($mutation['attributes'] ?? null, true);
+            $tag = is_int($mutation['id'] ?? null) ? ($this->nodeContexts[$mutation['id']] ?? null) : null;
+
+            if ($tag === null) {
+                $this->reject('ambiguous_attribute_context');
+            }
+
+            $this->validateAttributes($mutation['attributes'] ?? null, $tag, true);
         }
     }
 
@@ -328,7 +419,7 @@ class ChunkPrivacyValidator
         }
     }
 
-    private function validateNode(mixed $node, bool $masked): void
+    private function validateNode(mixed $node, bool $masked, ?string $parentTag = null): void
     {
         $this->assertObject($node, 'invalid_node');
         $type = $node['type'] ?? null;
@@ -341,7 +432,7 @@ class ChunkPrivacyValidator
             0 => $this->validateDocumentNode($node, $masked),
             1 => $this->validateDocumentTypeNode($node),
             2 => $this->validateElementNode($node, $masked),
-            3, 4, 5 => $this->validateTextNode($node, $masked),
+            3, 4, 5 => $this->validateTextNode($node, $masked, $parentTag),
             default => $this->reject('unknown_node_type'),
         };
     }
@@ -357,7 +448,8 @@ class ChunkPrivacyValidator
             $this->reject('invalid_document_node');
         }
 
-        $this->validateChildren($node, $masked);
+        $this->nodeContexts[$node['id']] = '#document';
+        $this->validateChildren($node, $masked, '#document');
     }
 
     /** @param array<mixed> $node */
@@ -390,12 +482,16 @@ class ChunkPrivacyValidator
 
         $tag = $this->canonicalName($node['tagName'] ?? null);
 
-        if (in_array($tag, self::BLOCKED_TAGS, true)) {
+        if (! in_array($tag, self::ALLOWED_TAGS, true)) {
             $this->reject('blocked_media_element');
         }
 
         $attributes = $node['attributes'] ?? null;
-        $attributeNames = $this->validateAttributes($attributes, $masked || in_array($tag, self::MASKED_TAGS, true));
+        $attributeNames = $this->validateAttributes(
+            $attributes,
+            $tag,
+            $masked || in_array($tag, self::MASKED_TAGS, true),
+        );
         $nodeMasked = $masked
             || in_array($tag, self::MASKED_TAGS, true)
             || in_array('contenteditable', $attributeNames, true)
@@ -405,11 +501,12 @@ class ChunkPrivacyValidator
             $this->reject('unmasked_form_value');
         }
 
-        $this->validateChildren($node, $nodeMasked);
+        $this->nodeContexts[$node['id']] = $tag;
+        $this->validateChildren($node, $nodeMasked, $tag);
     }
 
     /** @param array<mixed> $node */
-    private function validateTextNode(array $node, bool $masked): void
+    private function validateTextNode(array $node, bool $masked, ?string $parentTag): void
     {
         $this->assertOnlyKeys($node, ['type', 'id', 'textContent', 'isStyle', 'rootId']);
         $this->assertIntegerFields($node, ['id']);
@@ -420,11 +517,17 @@ class ChunkPrivacyValidator
             $this->reject('invalid_text_node');
         }
 
+        if ($parentTag === null) {
+            $this->reject('ambiguous_text_context');
+        }
+
+        $this->nodeContexts[$node['id']] = $parentTag;
+
         if ($masked && $node['textContent'] !== '***') {
             $this->reject('unmasked_contenteditable_text');
         }
 
-        if (($node['isStyle'] ?? false) === true) {
+        if ($parentTag === 'style') {
             $this->assertSafeCss($node['textContent']);
         } else {
             $this->assertNoDataUrl($node['textContent']);
@@ -434,7 +537,7 @@ class ChunkPrivacyValidator
     /**
      * @return list<string>
      */
-    private function validateAttributes(mixed $attributes, bool $requireMaskedValue): array
+    private function validateAttributes(mixed $attributes, string $tag, bool $requireMaskedValue): array
     {
         $this->assertObject($attributes, 'invalid_node_attributes');
         $names = [];
@@ -446,10 +549,9 @@ class ChunkPrivacyValidator
 
             $canonical = $this->canonicalName($name);
 
-            if (in_array($canonical, $names, true)
-                || in_array($canonical, self::HYDRATION_ATTRIBUTES, true)
-                || in_array($canonical, self::RESOURCE_ATTRIBUTES, true)
-                || str_starts_with($canonical, 'on')) {
+            $allowed = [...self::GLOBAL_ATTRIBUTES, ...(self::TAG_ATTRIBUTES[$tag] ?? [])];
+
+            if (in_array($canonical, $names, true) || ! in_array($canonical, $allowed, true)) {
                 $this->reject('unsafe_attribute');
             }
 
@@ -457,7 +559,7 @@ class ChunkPrivacyValidator
                 $this->reject('unmasked_form_value');
             }
 
-            if (in_array($canonical, ['style', '_csstext'], true)) {
+            if (in_array($canonical, self::CSS_VALUE_ATTRIBUTES, true)) {
                 $this->assertSafeCss($value);
             } elseif (is_string($value)) {
                 $this->assertNoDataUrl($value);
@@ -470,10 +572,10 @@ class ChunkPrivacyValidator
     }
 
     /** @param array<mixed> $node */
-    private function validateChildren(array $node, bool $masked): void
+    private function validateChildren(array $node, bool $masked, string $parentTag): void
     {
         foreach ($this->requiredList($node, 'childNodes') as $child) {
-            $this->validateNode($child, $masked);
+            $this->validateNode($child, $masked, $parentTag);
         }
     }
 
@@ -498,10 +600,28 @@ class ChunkPrivacyValidator
             $css,
         );
 
-        if (! is_string($decoded)
-            || str_contains($decoded, '\\')
-            || preg_match('/(?:url\s*\(|@import\b)/iu', $decoded) === 1) {
-            $this->reject('css_url');
+        if (! is_string($decoded) || str_contains($decoded, '\\')) {
+            $this->reject('invalid_css_escape');
+        }
+
+        preg_match_all('/@(-?[a-z_][a-z0-9_-]*)/iu', $decoded, $atRules);
+
+        foreach ($atRules[1] as $atRule) {
+            if (! in_array(mb_strtolower($atRule, 'UTF-8'), ['media', 'supports', 'keyframes', '-webkit-keyframes'], true)) {
+                $this->reject('unsafe_css_at_rule');
+            }
+        }
+
+        preg_match_all('/(-?[a-z_][a-z0-9_-]*)\s*\(/iu', $decoded, $functions);
+
+        foreach ($functions[1] as $function) {
+            if (! in_array(mb_strtolower($function, 'UTF-8'), self::ALLOWED_CSS_FUNCTIONS, true)) {
+                $this->reject('unsafe_css_function');
+            }
+        }
+
+        if (preg_match('/(?:\b(?:https?|ftp):|\/\/)/iu', $decoded) === 1) {
+            $this->reject('unsafe_css_value');
         }
 
         $this->assertNoDataUrl($decoded);
@@ -511,7 +631,7 @@ class ChunkPrivacyValidator
     {
         $canonical = $this->canonicalString($value);
 
-        if (preg_match('/^\s*data:/i', $canonical) === 1) {
+        if (preg_match('/(?<![a-z0-9_-])data:/i', $canonical) === 1) {
             $this->reject('data_url_media');
         }
     }
