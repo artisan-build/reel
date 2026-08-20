@@ -67,7 +67,7 @@
 
     <section
         class="rounded-xl border border-zinc-200 bg-zinc-950 p-4 text-white dark:border-zinc-700"
-        x-data="ReelReplayShell({ playerUrl: @js($playerUrl), nonce: @js($channelNonce) })"
+        x-data="ReelReplayShell({ playerUrlEndpoint: @js($playerUrlEndpoint), nonce: @js($channelNonce) })"
         x-init="init()"
         data-test="replay-shell"
     >
@@ -88,6 +88,7 @@
             <iframe
                 x-ref="frame"
                 x-bind:src="playerUrl"
+                x-on:error="fail('delivery_unavailable')"
                 sandbox="allow-scripts"
                 referrerpolicy="no-referrer"
                 class="mt-4 aspect-video w-full rounded-lg border-0 bg-white"

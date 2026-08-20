@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ReplayPlayerController;
+use App\Http\Controllers\ReplayPlayerUrlController;
 use App\Http\Controllers\ReplaySessionController;
 use App\Livewire\Applications\Create as CreateApplication;
 use App\Livewire\Applications\Index as ApplicationIndex;
@@ -18,8 +19,9 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
         ->name('applications.sessions.index');
     Route::get('applications/{application}/sessions/{recordingSession}', ReplaySessionController::class)
         ->name('sessions.show');
+    Route::get('applications/{application}/sessions/{recordingSession}/player-url', ReplayPlayerUrlController::class)
+        ->name('sessions.player-url');
     Route::get('applications/{application}/sessions/{recordingSession}/player', ReplayPlayerController::class)
-        ->middleware('signed')
         ->name('sessions.player');
 
     Route::middleware('admin')->prefix('applications')->group(function (): void {

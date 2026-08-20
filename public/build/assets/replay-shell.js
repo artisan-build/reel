@@ -3,7 +3,8 @@
 
     global.ReelReplayShell = function (configuration) {
         return {
-            playerUrl: configuration.playerUrl,
+            playerUrlEndpoint: configuration.playerUrlEndpoint,
+            playerUrl: '',
             nonce: configuration.nonce,
             loaded: false,
             ready: false,
@@ -12,6 +13,7 @@
             time: 0,
             duration: 0,
             listener: null,
+            readinessTimer: null,
 
             init() {
                 this.listener = (event) => {
@@ -21,11 +23,11 @@
                         : null;
                     if (!message) return;
                     if (message.type === 'diagnostic') {
-                        this.diagnostic = 'Replay unavailable: ' + message.code.replaceAll('_', ' ');
-                        this.ready = false;
+                        this.fail(message.code);
                         return;
                     }
                     if (message.type === 'ready') {
+                        this.clearReadinessTimer();
                         this.ready = true;
                         this.duration = message.duration;
                         this.status = 'Replay ready';
@@ -38,11 +40,45 @@
                 global.addEventListener('message', this.listener);
             },
 
-            load() {
-                this.loaded = true;
+            async load() {
+                this.clearReadinessTimer();
+                this.diagnostic = '';
+                this.ready = false;
+                this.status = 'Replay loading';
+
+                try {
+                    const response = await global.fetch(this.playerUrlEndpoint, {
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json' },
+                    });
+                    if (!response.ok) throw new Error('delivery_unavailable');
+                    const payload = await response.json();
+                    if (!payload || typeof payload.url !== 'string' || payload.url === '') {
+                        throw new Error('delivery_unavailable');
+                    }
+                    this.playerUrl = payload.url;
+                    this.readinessTimer = global.setTimeout(() => this.fail('player_timeout'), 10000);
+                    this.loaded = true;
+                } catch (_) {
+                    this.fail('delivery_unavailable');
+                }
+            },
+
+            clearReadinessTimer() {
+                if (this.readinessTimer !== null) global.clearTimeout(this.readinessTimer);
+                this.readinessTimer = null;
+            },
+
+            fail(code) {
+                this.clearReadinessTimer();
+                this.diagnostic = 'Replay unavailable: ' + code.replaceAll('_', ' ');
+                this.status = this.diagnostic;
+                this.ready = false;
+                this.loaded = false;
             },
 
             destroy() {
+                this.clearReadinessTimer();
                 if (this.listener) global.removeEventListener('message', this.listener);
             },
 

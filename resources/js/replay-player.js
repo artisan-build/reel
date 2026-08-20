@@ -47,6 +47,22 @@
         duration,
         Math.max(0, requestedStart >= firstTimestamp ? requestedStart - firstTimestamp : requestedStart),
     );
+    let progressTimer = null;
+
+    const sendState = () => send({ type: 'state', status: status, time: position, duration: duration });
+    const syncPosition = (announce) => {
+        const current = Number(replayer.getCurrentTime());
+        if (Number.isFinite(current)) position = Math.min(duration, Math.max(0, current));
+        if (announce) sendState();
+    };
+    const stopTracking = () => {
+        if (progressTimer !== null) window.clearInterval(progressTimer);
+        progressTimer = null;
+    };
+    const startTracking = () => {
+        stopTracking();
+        progressTimer = window.setInterval(() => syncPosition(true), 100);
+    };
 
     if (position > 0) replayer.goto(position, false);
 
@@ -62,9 +78,12 @@
         if (message.command === 'play') {
             replayer.play(position);
             status = 'playing';
+            startTracking();
         } else if (message.command === 'pause') {
+            syncPosition(false);
             replayer.pause();
             status = 'paused';
+            stopTracking();
         } else if (message.command === 'seek' || message.command === 'marker') {
             position = Math.min(duration, message.value);
             replayer.goto(position, status === 'playing');
@@ -74,7 +93,7 @@
             replayer.setConfig({ skipInactive: message.value });
         }
 
-        send({ type: 'state', status: status, time: position, duration: duration });
+        sendState();
     });
 
     send({ type: 'ready', duration: duration });

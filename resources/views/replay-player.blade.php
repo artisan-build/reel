@@ -3,6 +3,7 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="{{ $csp }}">
         <title>Reel replay</title>
         <style>html,body,#reel-player{width:100%;height:100%;margin:0;overflow:hidden;background:#fff}#reel-diagnostic{box-sizing:border-box;padding:2rem;font:16px/1.5 system-ui;color:#3f3f46}</style>
     </head>

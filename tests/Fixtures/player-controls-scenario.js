@@ -10,7 +10,10 @@ const sendCommand = (command, value) => {
 };
 
 sendCommand('play');
+playerCurrentTime = 40;
+if (playerInterval) playerInterval();
 sendCommand('pause');
+sendCommand('play');
 sendCommand('seek', 50);
 sendCommand('speed', 2);
 sendCommand('skip-inactive', true);

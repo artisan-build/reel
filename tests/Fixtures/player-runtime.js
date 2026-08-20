@@ -4,7 +4,11 @@ window.parent = parentWindow;
 globalThis.playerCalls = [];
 globalThis.playerMessages = [];
 globalThis.playerListeners = {};
+globalThis.playerCurrentTime = 10;
+globalThis.playerInterval = null;
 window.addEventListener = (name, listener) => { playerListeners[name] = listener; };
+window.setInterval = (listener) => { playerInterval = listener; return 1; };
+window.clearInterval = () => { playerInterval = null; };
 window.parent.postMessage = (message, origin) => { playerMessages.push({ message: message, origin: origin }); };
 window.rrweb = {
     Replayer: class {
@@ -15,6 +19,7 @@ window.rrweb = {
         pause() { playerCalls.push(['pause']); }
         goto(value, playing) { playerCalls.push(['goto', value, playing]); }
         setConfig(value) { playerCalls.push(['config', value]); }
+        getCurrentTime() { return playerCurrentTime; }
     },
 };
 const elements = {

@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Application;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 
 class ReplaySessionController extends Controller
@@ -23,16 +22,12 @@ class ReplaySessionController extends Controller
             ->firstOrFail();
         $channelNonce = bin2hex(random_bytes(48));
         $timestamp = max(0, $request->integer('t'));
-        $playerUrl = URL::temporarySignedRoute(
-            'sessions.player',
-            now()->addMinutes(5),
-            [
-                'application' => $application,
-                'recordingSession' => $recording,
-                'channel' => $channelNonce,
-                'start' => $timestamp,
-            ],
-        );
+        $playerUrlEndpoint = route('sessions.player-url', [
+            'application' => $application,
+            'recordingSession' => $recording,
+            'channel' => $channelNonce,
+            'start' => $timestamp,
+        ]);
         $reasons = is_array($recording->incomplete_reasons)
             ? array_values(array_filter($recording->incomplete_reasons, is_string(...)))
             : [];
@@ -48,7 +43,7 @@ class ReplaySessionController extends Controller
         return view('sessions.show', compact(
             'channelNonce',
             'detectedMissingDataReasons',
-            'playerUrl',
+            'playerUrlEndpoint',
             'recording',
             'uncertaintyReasons',
         ));

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Application;
 use App\Models\ReplayView;
+use App\Services\ReplayPayload;
 use App\Services\ReplayPayloadReader;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -25,15 +26,13 @@ class ReplayPlayerController extends Controller
         $channel = $request->query('channel');
         abort_unless(is_string($channel) && preg_match('/^[a-f0-9]{96}$/', $channel) === 1, 404);
 
-        ReplayView::query()->create([
-            'user_id' => $request->user()->getAuthIdentifier(),
-            'application_id' => $application->getKey(),
-            'recording_session_id' => $session->getKey(),
-            'viewed_at' => now(),
-        ]);
-
         $session->setRelation('application', $application);
-        $payload = $reader->read($session);
+        $validSignature = $request->hasValidSignature();
+        $payload = $validSignature
+            ? $reader->read($session)
+            : ReplayPayload::diagnostic('delivery_link_invalid');
+        $status = $validSignature ? 200 : 403;
+
         $scriptNonce = bin2hex(random_bytes(24));
         $playerRuntime = $this->readFile(resource_path('js/replay-player.js'));
         $messageRuntime = $this->readFile(public_path('build/assets/replay-message-channel.js'));
@@ -50,6 +49,15 @@ class ReplayPlayerController extends Controller
         $events = $this->encodeJson($payload->events);
         $csp = "default-src 'none'; script-src 'nonce-{$scriptNonce}'; style-src 'unsafe-inline'";
 
+        if ($payload->diagnostic === null) {
+            ReplayView::query()->create([
+                'user_id' => $request->user()->getAuthIdentifier(),
+                'application_id' => $application->getKey(),
+                'recording_session_id' => $session->getKey(),
+                'viewed_at' => now(),
+            ]);
+        }
+
         return response()->view('replay-player', compact(
             'configuration',
             'events',
@@ -57,7 +65,8 @@ class ReplayPlayerController extends Controller
             'playerRuntime',
             'rrwebRuntime',
             'scriptNonce',
-        ))->withHeaders([
+            'csp',
+        ), $status)->withHeaders([
             'Cache-Control' => 'no-store, private',
             'Content-Security-Policy' => $csp,
             'Referrer-Policy' => 'no-referrer',

@@ -343,6 +343,8 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
             "default-src 'none'; script-src 'nonce-{$nonce[1]}'; style-src 'unsafe-inline'",
         )
         ->and($response->headers->get('Referrer-Policy'))->toBe('no-referrer')
+        ->and($content)->toContain('http-equiv="Content-Security-Policy"')
+        ->and($content)->toContain("default-src &#039;none&#039;; script-src &#039;nonce-{$nonce[1]}&#039;; style-src &#039;unsafe-inline&#039;")
         ->and($content)->toContain('Visible safe content');
     $this->assertDatabaseHas('replay_views', [
         'user_id' => $viewer->getKey(),
@@ -351,6 +353,27 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
     ]);
     expect(DB::getSchemaBuilder()->getColumnListing('replay_views'))
         ->not->toContain('dom', 'events', 'payload', 'manifest');
+});
+
+it('mints a fresh signed player URL only when replay loading is requested', function (): void {
+    $viewer = User::factory()->create();
+    $session = makeReplaySession();
+    $detail = $this->actingAs($viewer)->get(route('sessions.show', [
+        'application' => $session->application,
+        'recordingSession' => $session,
+    ]))->assertOk();
+
+    expect($detail->getContent())->not->toContain('signature=');
+
+    $this->travel(6)->minutes();
+    $delivery = $this->getJson(route('sessions.player-url', [
+        'application' => $session->application,
+        'recordingSession' => $session,
+        'channel' => str_repeat('a', 96),
+        'start' => 0,
+    ]))->assertOk()->assertJsonStructure(['url']);
+
+    $this->get((string) $delivery->json('url'))->assertOk();
 });
 
 it('never serves hostile captured DOM and returns a diagnostic without captured content', function (): void {
@@ -437,6 +460,23 @@ it('shows diagnostics for missing corrupt checksum-mismatched and incompatible o
     'incompatible object' => ['incompatible', 'incompatible_version'],
 ]);
 
+it('does not mark a diagnostic replay as watched', function (): void {
+    $viewer = User::factory()->create();
+    $session = makeReplaySession();
+    Storage::disk('local')->delete($session->manifest['objects'][0]['key']);
+
+    $this->actingAs($viewer)
+        ->get(signedReplayUrl($session))
+        ->assertOk()
+        ->assertSee('missing_object');
+
+    expect(ReplayView::query()->where('recording_session_id', $session->getKey())->count())->toBe(0);
+
+    Livewire::withQueryParams(['watched' => 'no'])
+        ->test(Index::class)
+        ->assertSee($session->session_id);
+});
+
 it('rejects cross-session object keys before reading them', function (): void {
     $session = makeReplaySession();
     rewriteReplayManifest($session, function (array &$manifest): void {
@@ -474,8 +514,8 @@ it('rejects expired forged and cross-application player delivery URLs', function
         'channel' => str_repeat('a', 96),
     ]);
 
-    $this->actingAs($viewer)->get($expired)->assertForbidden();
-    $this->get($forged)->assertForbidden();
+    $this->actingAs($viewer)->get($expired)->assertForbidden()->assertSee('delivery_link_invalid');
+    $this->get($forged)->assertForbidden()->assertSee('delivery_link_invalid');
     $this->get($crossApplication)->assertNotFound();
 });
 
@@ -539,11 +579,47 @@ it('executes player controls while ignoring an untrusted command origin', functi
         ['goto', 10, false],
         ['play', 10],
         ['pause'],
-        ['goto', 50, false],
+        ['play', 40],
+        ['goto', 50, true],
         ['config', ['speed' => 2]],
         ['config', ['skipInactive' => true]],
-        ['goto', 75, false],
-    ])->and($result['messages'])->toHaveCount(7)
+        ['goto', 75, true],
+    ])->and($result['messages'])->toHaveCount(9)
         ->and($result['messages'][0]['message']['type'])->toBe('ready')
+        ->and($result['messages'][2]['message']['time'])->toBe(40)
         ->and($result['messages'][0]['origin'])->toBe('https://reel.example');
+});
+
+it('turns player delivery failures and readiness timeouts into shell diagnostics', function (): void {
+    $configured = getenv('JSC_BINARY');
+    $finder = new ExecutableFinder;
+    $binary = null;
+
+    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
+            $binary = $candidate;
+            break;
+        }
+    }
+
+    if ($binary === null) {
+        $this->markTestSkipped('JavaScriptCore is unavailable.');
+    }
+
+    $process = new Process([
+        $binary,
+        public_path('build/assets/replay-message-channel.js'),
+        base_path('tests/Fixtures/shell-runtime.js'),
+        public_path('build/assets/replay-shell.js'),
+        base_path('tests/Fixtures/shell-diagnostics-scenario.js'),
+    ]);
+    $process->run();
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput().$process->getOutput());
+    $result = json_decode(trim($process->getOutput()), true, flags: JSON_THROW_ON_ERROR);
+
+    expect($result)->toBe([
+        'ready' => ['ready' => true, 'timerCleared' => true],
+        'timeout' => 'Replay unavailable: player timeout',
+        'unavailable' => 'Replay unavailable: delivery unavailable',
+    ]);
 });
