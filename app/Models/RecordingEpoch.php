@@ -9,7 +9,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-/** @property RecordingEpochStatus $status */
+/**
+ * @mixin IdeHelperRecordingEpoch
+ */
 #[Fillable(['recording_session_id', 'epoch_id', 'failure_code'])]
 class RecordingEpoch extends Model
 {

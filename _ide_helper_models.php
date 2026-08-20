@@ -30,6 +30,9 @@ namespace App\Models{
  * @property int $max_chunks_per_session
  * @property int $max_compressed_bytes_per_session
  * @property int $max_compressed_chunk_bytes
+ * @property int $max_daily_chunks
+ * @property int $max_daily_compressed_bytes
+ * @property int $max_ingest_requests_per_minute
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ApplicationCredential> $credentials
  * @property-read int|null $credentials_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingSession> $recordingSessions
@@ -49,6 +52,9 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxCompressedBytesPerSession($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxCompressedChunkBytes($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxConcurrentSessions($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxDailyChunks($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxDailyCompressedBytes($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxIngestRequestsPerMinute($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxNewSessionsPerDay($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereName($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application wherePublicId($value)
@@ -137,6 +143,60 @@ namespace App\Models{
 namespace App\Models{
 /**
  * @property int $id
+ * @property int $recording_session_id
+ * @property string $epoch_id
+ * @property \App\Enums\RecordingEpochStatus $status
+ * @property string|null $failure_code
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $updated_at
+ * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingEpochTransition> $transitions
+ * @property-read int|null $transitions_count
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereEpochId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereFailureCode($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereRecordingSessionId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereStatus($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereUpdatedAt($value)
+ * @mixin \Eloquent
+ */
+	#[\AllowDynamicProperties]
+	class IdeHelperRecordingEpoch {}
+}
+
+namespace App\Models{
+/**
+ * @property int $id
+ * @property int $recording_epoch_id
+ * @property string|null $previous_state
+ * @property string $new_state
+ * @property string $reason
+ * @property int $attempt
+ * @property \Carbon\CarbonImmutable $transitioned_at
+ * @property-read \App\Models\RecordingEpoch $recordingEpoch
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereAttempt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereNewState($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition wherePreviousState($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereReason($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereRecordingEpochId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereTransitionedAt($value)
+ * @mixin \Eloquent
+ */
+	#[\AllowDynamicProperties]
+	class IdeHelperRecordingEpochTransition {}
+}
+
+namespace App\Models{
+/**
+ * @property int $id
  * @property int $application_id
  * @property int $application_credential_id
  * @property string $session_id
@@ -162,6 +222,8 @@ namespace App\Models{
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingChunk> $chunks
  * @property-read int|null $chunks_count
  * @property-read \App\Models\ApplicationCredential $credential
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingEpoch> $epochs
+ * @property-read int|null $epochs_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingSessionTransition> $transitions
  * @property-read int|null $transitions_count
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession newModelQuery()
