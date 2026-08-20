@@ -48,7 +48,8 @@ function makeReplaySession(array $events = [], array $attributes = []): Recordin
 {
     $events = $events === [] ? replayEvents() : $events;
     $application = $attributes['application'] ?? Application::factory()->create();
-    unset($attributes['application']);
+    $status = $attributes['status'] ?? RecordingSessionStatus::Ready;
+    unset($attributes['application'], $attributes['status']);
     $credential = ApplicationCredential::factory()->for($application)->create();
     $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
     $objectKey = "reel/chunks/{$application->public_id}/{$sessionId}/replay.jsonl.gz";
@@ -111,7 +112,7 @@ function makeReplaySession(array $events = [], array $attributes = []): Recordin
         'compacted_at' => now(),
     ], $attributes));
     $session->forceFill([
-        'status' => RecordingSessionStatus::Ready,
+        'status' => $status,
         'manifest' => $manifest,
         'manifest_checksum' => $reader->checksum($manifest),
         'compacted_at' => now(),
@@ -221,6 +222,137 @@ it('composes every session filter from the URL without reading replay objects', 
     }
 });
 
+it('discriminates each session list predicate independently', function (string $case): void {
+    $viewer = User::factory()->create();
+    $application = Application::factory()->create();
+    $matchingAttributes = ['application' => $application];
+    $otherAttributes = ['application' => $application];
+    $query = [];
+
+    if ($case === 'started-from') {
+        $matchingAttributes['started_at'] = now();
+        $otherAttributes['started_at'] = now()->subDay();
+        $query['startedFrom'] = now()->subMinute()->format('Y-m-d\TH:i:s');
+    } elseif ($case === 'started-to') {
+        $matchingAttributes['started_at'] = now()->subDay();
+        $otherAttributes['started_at'] = now();
+        $query['startedTo'] = now()->subHours(12)->format('Y-m-d\TH:i:s');
+    } elseif ($case === 'ended-from') {
+        $matchingAttributes['ended_at'] = now();
+        $otherAttributes['ended_at'] = now()->subDay();
+        $query['endedFrom'] = now()->subMinute()->format('Y-m-d\TH:i:s');
+    } elseif ($case === 'ended-to') {
+        $matchingAttributes['ended_at'] = now()->subDay();
+        $otherAttributes['ended_at'] = now();
+        $query['endedTo'] = now()->subHours(12)->format('Y-m-d\TH:i:s');
+    } elseif ($case === 'duration-min') {
+        $matchingAttributes['duration_seconds'] = 100;
+        $otherAttributes['duration_seconds'] = 50;
+        $query['durationMin'] = '100';
+    } elseif ($case === 'duration-max') {
+        $matchingAttributes['duration_seconds'] = 50;
+        $otherAttributes['duration_seconds'] = 100;
+        $query['durationMax'] = '50';
+    } elseif ($case === 'application') {
+        $otherAttributes['application'] = Application::factory()->create();
+        $query['application'] = $application->public_id;
+    } elseif ($case === 'initial-path') {
+        $matchingAttributes['initial_path'] = '/matching-initial';
+        $matchingAttributes['latest_path'] = '/other-latest';
+        $otherAttributes['initial_path'] = '/other-initial';
+        $otherAttributes['latest_path'] = '/other-latest';
+        $query['path'] = '/matching-initial';
+    } elseif ($case === 'latest-path') {
+        $matchingAttributes['initial_path'] = '/other-initial';
+        $matchingAttributes['latest_path'] = '/matching-latest';
+        $otherAttributes['initial_path'] = '/other-initial';
+        $otherAttributes['latest_path'] = '/other-latest';
+        $query['path'] = '/matching-latest';
+    } elseif ($case === 'user-id') {
+        $matchingAttributes['application_user_id'] = 'matching-user';
+        $otherAttributes['application_user_id'] = 'other-user';
+        $query['user_id'] = 'matching-user';
+    } elseif ($case === 'release') {
+        $matchingAttributes['release_id'] = 'matching-release';
+        $otherAttributes['release_id'] = 'other-release';
+        $query['release'] = 'matching-release';
+    } elseif ($case === 'status') {
+        $matchingAttributes['status'] = RecordingSessionStatus::Ready;
+        $otherAttributes['status'] = RecordingSessionStatus::Failed;
+        $query['status'] = RecordingSessionStatus::Ready->value;
+    } elseif ($case === 'protected-yes') {
+        $matchingAttributes['protected_at'] = now();
+        $matchingAttributes['protected_by'] = $viewer->getKey();
+        $query['protected'] = 'yes';
+    } elseif ($case === 'protected-no') {
+        $otherAttributes['protected_at'] = now();
+        $otherAttributes['protected_by'] = $viewer->getKey();
+        $query['protected'] = 'no';
+    }
+
+    $matching = makeReplaySession(attributes: $matchingAttributes);
+    $other = makeReplaySession(attributes: $otherAttributes);
+
+    if ($case === 'session-id') {
+        $query['session_id'] = $matching->session_id;
+    } elseif ($case === 'marker') {
+        $matching->markers()->create([
+            'application_id' => $matching->application_id,
+            'marker_type' => 'matching-marker',
+            'occurred_at' => 1_000,
+            'metadata' => [],
+        ]);
+        $other->markers()->create([
+            'application_id' => $other->application_id,
+            'marker_type' => 'other-marker',
+            'occurred_at' => 1_000,
+            'metadata' => [],
+        ]);
+        $query['marker'] = 'matching-marker';
+    } elseif ($case === 'watched-yes') {
+        ReplayView::query()->create([
+            'user_id' => $viewer->getKey(),
+            'application_id' => $matching->application_id,
+            'recording_session_id' => $matching->getKey(),
+            'viewed_at' => now(),
+        ]);
+        $query['watched'] = 'yes';
+    } elseif ($case === 'watched-no') {
+        ReplayView::query()->create([
+            'user_id' => $viewer->getKey(),
+            'application_id' => $other->application_id,
+            'recording_session_id' => $other->getKey(),
+            'viewed_at' => now(),
+        ]);
+        $query['watched'] = 'no';
+    }
+
+    $this->actingAs($viewer);
+    Livewire::withQueryParams($query)
+        ->test(Index::class)
+        ->assertSee($matching->session_id)
+        ->assertDontSee($other->session_id);
+})->with([
+    'started from' => 'started-from',
+    'started to' => 'started-to',
+    'ended from' => 'ended-from',
+    'ended to' => 'ended-to',
+    'duration min' => 'duration-min',
+    'duration max' => 'duration-max',
+    'application' => 'application',
+    'initial path' => 'initial-path',
+    'latest path' => 'latest-path',
+    'session id' => 'session-id',
+    'application user id' => 'user-id',
+    'release' => 'release',
+    'status' => 'status',
+    'marker' => 'marker',
+    'protected yes' => 'protected-yes',
+    'protected no' => 'protected-no',
+    'watched yes' => 'watched-yes',
+    'watched no' => 'watched-no',
+]);
+
 it('backs every session list predicate and ordering field with named indexes', function (): void {
     $indexes = DB::table('pg_indexes')
         ->whereIn('tablename', ['applications', 'recording_sessions', 'recording_markers', 'replay_views'])
@@ -283,7 +415,7 @@ it('shows metadata and timeline before download and distinguishes uncertainty fr
     $this->actingAs($viewer);
     Storage::shouldReceive('disk')->never();
 
-    $this->get(route('sessions.show', [
+    $content = $this->get(route('sessions.show', [
         'application' => $session->application,
         'recordingSession' => $session,
     ]))
@@ -294,7 +426,12 @@ it('shows metadata and timeline before download and distinguishes uncertainty fr
         ->assertSee('number of gaps is not determinable')
         ->assertSee('Missing replay data detected')
         ->assertSee('Missing full snapshot: epoch-2')
-        ->assertSee('Not determinable');
+        ->assertSee('Not determinable')
+        ->getContent();
+    preg_match('/data-test="completeness-missing-data"[^>]*>(.*?)<\/section>/s', (string) $content, $detectedLoss);
+
+    expect($detectedLoss[1] ?? null)->toBeString()
+        ->not->toContain('Missing terminal sequence');
 });
 
 it('uses the exact opaque-origin sandbox and no-referrer iframe attributes', function (): void {
@@ -334,23 +471,29 @@ it('issues a distinct per-player channel nonce on each detail response', functio
 it('serves a valid replay under an exact default-deny CSP and records the attributed view', function (): void {
     $viewer = User::factory()->create();
     $session = makeReplaySession(replayEvents('Visible safe content'));
-    $response = $this->actingAs($viewer)->get(signedReplayUrl($session))->assertOk();
-    $content = $response->getContent();
-    preg_match('/nonce="([a-f0-9]{48})"/', (string) $content, $nonce);
+    $url = signedReplayUrl($session);
+    $firstResponse = $this->actingAs($viewer)->get($url)->assertOk();
+    $secondResponse = $this->get($url)->assertOk();
+    $content = $firstResponse->getContent();
+    preg_match('/nonce="([a-f0-9]{48})"/', (string) $content, $firstNonce);
+    preg_match('/nonce="([a-f0-9]{48})"/', (string) $secondResponse->getContent(), $secondNonce);
 
-    expect($nonce[1] ?? null)->toBeString()
-        ->and($response->headers->get('Content-Security-Policy'))->toBe(
-            "default-src 'none'; script-src 'nonce-{$nonce[1]}'; style-src 'unsafe-inline'",
+    expect($firstNonce[1] ?? null)->toBeString()
+        ->and($secondNonce[1] ?? null)->toBeString()
+        ->and($secondNonce[1])->not->toBe($firstNonce[1])
+        ->and($firstResponse->headers->get('Content-Security-Policy'))->toBe(
+            "default-src 'none'; script-src 'nonce-{$firstNonce[1]}'; style-src 'unsafe-inline'",
         )
-        ->and($response->headers->get('Referrer-Policy'))->toBe('no-referrer')
+        ->and($firstResponse->headers->get('Referrer-Policy'))->toBe('no-referrer')
         ->and($content)->toContain('http-equiv="Content-Security-Policy"')
-        ->and($content)->toContain("default-src &#039;none&#039;; script-src &#039;nonce-{$nonce[1]}&#039;; style-src &#039;unsafe-inline&#039;")
+        ->and($content)->toContain("default-src &#039;none&#039;; script-src &#039;nonce-{$firstNonce[1]}&#039;; style-src &#039;unsafe-inline&#039;")
         ->and($content)->toContain('Visible safe content');
-    $this->assertDatabaseHas('replay_views', [
-        'user_id' => $viewer->getKey(),
-        'application_id' => $session->application_id,
-        'recording_session_id' => $session->getKey(),
-    ]);
+    $views = ReplayView::query()
+        ->where('user_id', $viewer->getKey())
+        ->where('recording_session_id', $session->getKey())
+        ->get();
+    expect($views)->toHaveCount(2)
+        ->and($views->every(fn (ReplayView $view): bool => $view->viewed_at !== null))->toBeTrue();
     expect(DB::getSchemaBuilder()->getColumnListing('replay_views'))
         ->not->toContain('dom', 'events', 'payload', 'manifest');
 });
@@ -372,8 +515,12 @@ it('mints a fresh signed player URL only when replay loading is requested', func
         'channel' => str_repeat('a', 96),
         'start' => 0,
     ]))->assertOk()->assertJsonStructure(['url']);
+    $url = (string) $delivery->json('url');
+    parse_str((string) parse_url($url, PHP_URL_QUERY), $signedQuery);
+    $ttl = ((int) ($signedQuery['expires'] ?? 0)) - now()->getTimestamp();
 
-    $this->get((string) $delivery->json('url'))->assertOk();
+    expect($ttl)->toBeGreaterThanOrEqual(299)->toBeLessThanOrEqual(300);
+    $this->get($url)->assertOk();
 });
 
 it('never serves hostile captured DOM and returns a diagnostic without captured content', function (): void {
@@ -460,6 +607,17 @@ it('shows diagnostics for missing corrupt checksum-mismatched and incompatible o
     'incompatible object' => ['incompatible', 'incompatible_version'],
 ]);
 
+it('shows replay_not_ready for a session that has not reached ready state', function (): void {
+    $session = makeReplaySession(attributes: ['status' => RecordingSessionStatus::Recording]);
+
+    $this->actingAs(User::factory()->create())
+        ->get(signedReplayUrl($session))
+        ->assertOk()
+        ->assertSee('replay_not_ready');
+
+    expect(ReplayView::query()->where('recording_session_id', $session->getKey())->count())->toBe(0);
+});
+
 it('does not mark a diagnostic replay as watched', function (): void {
     $viewer = User::factory()->create();
     $session = makeReplaySession();
@@ -488,6 +646,23 @@ it('rejects cross-session object keys before reading them', function (): void {
         ->assertOk()
         ->assertSee('invalid_manifest');
 });
+
+it('requires slash-delimited application and session object-key boundaries', function (string $segment): void {
+    $session = makeReplaySession();
+    rewriteReplayManifest($session, function (array &$manifest) use ($segment): void {
+        $parts = explode('/', $manifest['objects'][0]['key']);
+        $parts[$segment === 'application' ? 2 : 3] .= '0';
+        $manifest['objects'][0]['key'] = implode('/', $parts);
+    });
+
+    $this->actingAs(User::factory()->create())
+        ->get(signedReplayUrl($session->fresh(['application'])))
+        ->assertOk()
+        ->assertSee('invalid_manifest');
+})->with([
+    'application app-1 does not match app-10' => 'application',
+    'session id prefix does not match a longer id' => 'session',
+]);
 
 it('caps compressed and decompressed replay objects', function (string $setting): void {
     config()->set("replay.{$setting}", 1);
@@ -539,6 +714,38 @@ it('executes the shipped message validator and drops wrong-origin nonce type and
         $binary,
         public_path('build/assets/replay-message-channel.js'),
         base_path('tests/Fixtures/player-message-channel-scenario.js'),
+    ]);
+    $process->run();
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput().$process->getOutput());
+    $result = json_decode(trim($process->getOutput()), true, flags: JSON_THROW_ON_ERROR);
+
+    expect($result)->each->toBeTrue();
+});
+
+it('round trips real player and shell messages while rejecting exact channel near misses', function (): void {
+    $configured = getenv('JSC_BINARY');
+    $finder = new ExecutableFinder;
+    $binary = null;
+
+    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
+            $binary = $candidate;
+            break;
+        }
+    }
+
+    if ($binary === null) {
+        $this->markTestSkipped('JavaScriptCore is unavailable.');
+    }
+
+    $process = new Process([
+        $binary,
+        public_path('build/assets/replay-message-channel.js'),
+        base_path('tests/Fixtures/channel-roundtrip-shell-runtime.js'),
+        public_path('build/assets/replay-shell.js'),
+        base_path('tests/Fixtures/channel-roundtrip-player-runtime.js'),
+        resource_path('js/replay-player.js'),
+        base_path('tests/Fixtures/channel-roundtrip-scenario.js'),
     ]);
     $process->run();
     expect($process->isSuccessful())->toBeTrue($process->getErrorOutput().$process->getOutput());
@@ -622,4 +829,33 @@ it('turns player delivery failures and readiness timeouts into shell diagnostics
         'timeout' => 'Replay unavailable: player timeout',
         'unavailable' => 'Replay unavailable: delivery unavailable',
     ]);
+});
+
+it('renders diagnostic player state visibly and sends it to the shell', function (): void {
+    $configured = getenv('JSC_BINARY');
+    $finder = new ExecutableFinder;
+    $binary = null;
+
+    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
+            $binary = $candidate;
+            break;
+        }
+    }
+
+    if ($binary === null) {
+        $this->markTestSkipped('JavaScriptCore is unavailable.');
+    }
+
+    $process = new Process([
+        $binary,
+        base_path('tests/Fixtures/player-diagnostic-runtime.js'),
+        resource_path('js/replay-player.js'),
+        base_path('tests/Fixtures/player-diagnostic-scenario.js'),
+    ]);
+    $process->run();
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput().$process->getOutput());
+    $result = json_decode(trim($process->getOutput()), true, flags: JSON_THROW_ON_ERROR);
+
+    expect($result)->each->toBeTrue();
 });
