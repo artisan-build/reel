@@ -10,10 +10,12 @@ use App\Jobs\CleanupCompactionCandidate;
 use App\Models\RecordingChunk;
 use App\Models\RecordingSession;
 use ArtisanBuild\ReelClient\Envelope;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use JsonException;
 use RuntimeException;
 use Throwable;
 
@@ -30,6 +32,7 @@ class RecordingCompactor
         $diskName = (string) config('filesystems.default');
         $candidateKey = null;
         $published = false;
+        memory_reset_peak_usage();
 
         $session = DB::transaction(function () use ($recordingSessionId): ?RecordingSession {
             $locked = RecordingSession::query()->lockForUpdate()->find($recordingSessionId);
@@ -74,6 +77,11 @@ class RecordingCompactor
                 'candidates',
                 Str::uuid().'.jsonl.gz',
             ]);
+            $currentIncompleteReasons = $session->incomplete_reasons;
+            $incompleteReasons = array_values(array_unique([
+                ...(is_array($currentIncompleteReasons) ? $currentIncompleteReasons : []),
+                ...$this->epochFoundationReasons($disk, $session),
+            ]));
             [$candidateChecksum, $candidateBytes] = $this->writeCandidate($disk, $session, $candidateKey);
             event(new CompactionCandidateWritten($recordingSessionId, $candidateKey));
             $this->verifyCandidate($disk, $candidateKey, $candidateChecksum, $candidateBytes, $session);
@@ -95,8 +103,8 @@ class RecordingCompactor
                 'epoch_count' => $session->epoch_count,
                 'chunk_count' => $session->chunk_count,
                 'gap_count' => $session->gap_count,
-                'incomplete' => ! (bool) $session->is_complete,
-                'incomplete_reasons' => $session->incomplete_reasons,
+                'incomplete' => $incompleteReasons !== [],
+                'incomplete_reasons' => $incompleteReasons,
                 'compaction_state' => 'ready',
             ];
             $manifestChecksum = $this->manifestReader->checksum($manifest);
@@ -109,6 +117,7 @@ class RecordingCompactor
                 $recordingSessionId,
                 $manifest,
                 $manifestChecksum,
+                $incompleteReasons,
             ): string {
                 $locked = RecordingSession::query()->lockForUpdate()->find($recordingSessionId);
 
@@ -134,6 +143,8 @@ class RecordingCompactor
                 $locked->forceFill([
                     'manifest' => $manifest,
                     'manifest_checksum' => $manifestChecksum,
+                    'is_complete' => $incompleteReasons === [],
+                    'incomplete_reasons' => $incompleteReasons,
                     'status' => RecordingSessionStatus::Ready,
                     'status_changed_at' => now(),
                     'compacted_at' => now(),
@@ -170,9 +181,14 @@ class RecordingCompactor
             throw $exception;
         } finally {
             $durationMs = max(1, (int) ((hrtime(true) - $startedAt) / 1_000_000));
+            $peakMemoryBytes = memory_get_peak_usage(true);
             RecordingSession::query()
                 ->whereKey($recordingSessionId)
                 ->increment('compaction_duration_ms', $durationMs);
+            RecordingSession::query()
+                ->whereKey($recordingSessionId)
+                ->where('compaction_peak_memory_bytes', '<', $peakMemoryBytes)
+                ->update(['compaction_peak_memory_bytes' => $peakMemoryBytes]);
         }
     }
 
@@ -221,7 +237,16 @@ class RecordingCompactor
         }
 
         try {
-            foreach ($session->chunks()->orderBy('epoch_id')->orderBy('sequence')->cursor() as $chunk) {
+            $chunks = $session->chunks()
+                ->join('recording_epochs', function (JoinClause $join): void {
+                    $join->on('recording_epochs.recording_session_id', '=', 'recording_chunks.recording_session_id')
+                        ->on('recording_epochs.epoch_id', '=', 'recording_chunks.epoch_id');
+                })
+                ->orderBy('recording_epochs.ordinal')
+                ->orderBy('recording_chunks.sequence')
+                ->select('recording_chunks.*');
+
+            foreach ($chunks->cursor() as $chunk) {
                 $this->appendChunk($disk, $chunk, $candidate, $deflater);
             }
 
@@ -344,6 +369,46 @@ class RecordingCompactor
     {
         $session->increment('candidate_checksum_failure_count');
         $this->counters->increment('candidate_checksum_failures');
+    }
+
+    /** @return list<string> */
+    private function epochFoundationReasons(FilesystemAdapter $disk, RecordingSession $session): array
+    {
+        $reasons = [];
+
+        foreach ($session->epochs()->orderBy('ordinal')->cursor() as $epoch) {
+            $firstChunk = $session->chunks()
+                ->where('epoch_id', $epoch->epoch_id)
+                ->orderBy('sequence')
+                ->first();
+
+            if (! $firstChunk instanceof RecordingChunk) {
+                $reasons[] = 'missing_full_snapshot:'.$epoch->epoch_id;
+
+                continue;
+            }
+
+            $compressed = $disk->get($firstChunk->object_key);
+            $decoded = gzdecode($compressed);
+
+            if ($decoded === false) {
+                throw new RuntimeException('Unable to inspect an epoch foundation.');
+            }
+
+            try {
+                $events = json_decode($decoded, true, 64, JSON_THROW_ON_ERROR);
+            } catch (JsonException $exception) {
+                throw new RuntimeException('Unable to inspect an epoch foundation.', previous: $exception);
+            }
+
+            $firstEvent = is_array($events) && array_is_list($events) ? ($events[0] ?? null) : null;
+
+            if (! is_array($firstEvent) || ($firstEvent['type'] ?? null) !== 2) {
+                $reasons[] = 'missing_full_snapshot:'.$epoch->epoch_id;
+            }
+        }
+
+        return $reasons;
     }
 
     private function removeTemporaryChunks(FilesystemAdapter $disk, RecordingSession $session): void

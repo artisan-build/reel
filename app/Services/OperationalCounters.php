@@ -23,9 +23,7 @@ SQL, [$metric, $amount]);
     public function snapshot(?int $stateAgeThresholdSeconds = null): array
     {
         $threshold = $stateAgeThresholdSeconds ?? (int) config('reel_ingest.state_age_threshold_seconds');
-        $finalized = RecordingSession::query()
-            ->whereIn('status', [RecordingSessionStatus::Compacting, RecordingSessionStatus::Ready])
-            ->whereNotNull('is_complete');
+        $finalized = RecordingSession::query()->whereNotNull('is_complete');
         $finalizedCount = (clone $finalized)->count();
         $incompleteCount = (clone $finalized)->where('is_complete', false)->count();
         $stored = DB::table('operational_counters')->pluck('value', 'metric');
@@ -43,6 +41,7 @@ SQL, [$metric, $amount]);
             'late_upload_rejections' => (int) ($stored['late_upload_rejections'] ?? 0),
             'compaction_attempts' => (int) RecordingSession::query()->sum('compaction_attempts'),
             'compaction_duration_ms' => (int) RecordingSession::query()->sum('compaction_duration_ms'),
+            'compaction_peak_memory_bytes' => (int) RecordingSession::query()->max('compaction_peak_memory_bytes'),
             'compaction_noop_duplicates' => (int) RecordingSession::query()->sum('compaction_noop_count'),
             'candidate_checksum_failures' => (int) RecordingSession::query()->sum('candidate_checksum_failure_count'),
             'manifest_checksum_failures' => (int) RecordingSession::query()->sum('manifest_checksum_failure_count'),

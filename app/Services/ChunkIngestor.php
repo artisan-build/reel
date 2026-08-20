@@ -674,7 +674,10 @@ class ChunkIngestor
             'recording_session_id' => $session->getKey(),
             'epoch_id' => $epochId,
         ]);
-        $epoch->status = RecordingEpochStatus::Active;
+        $epoch->forceFill([
+            'status' => RecordingEpochStatus::Active,
+            'ordinal' => ((int) $session->epochs()->max('ordinal')) + 1,
+        ]);
         $epoch->save();
         $session->increment('epoch_count');
         $epoch->transitions()->create([

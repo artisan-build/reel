@@ -11,6 +11,7 @@ use App\Jobs\CleanupCompactionCandidate;
 use App\Jobs\CompactRecordingSession;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
+use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
 use App\Services\OperationalCounters;
@@ -63,6 +64,8 @@ function createCompactionFixture(
     $session->status = $status;
     $session->save();
 
+    $ordinal = 0;
+
     foreach (collect($chunks)->groupBy('epoch') as $epochId => $epochChunks) {
         $epoch = new RecordingEpoch;
         $epoch->fill([
@@ -70,19 +73,42 @@ function createCompactionFixture(
             'epoch_id' => $epochId,
             'terminal_sequence' => (int) $epochChunks->max('sequence'),
         ]);
-        $epoch->status = RecordingEpochStatus::Active;
+        $epoch->forceFill([
+            'status' => RecordingEpochStatus::Active,
+            'ordinal' => ++$ordinal,
+        ]);
         $epoch->save();
     }
 
     $compressedBytes = 0;
+    $firstSequences = collect($chunks)->groupBy('epoch')->map->min('sequence');
 
     foreach ($chunks as $index => $fixture) {
         $timestamp = now()->getTimestampMs() + $index;
-        $payload = gzencode(json_encode([[
-            'type' => 5,
-            'timestamp' => $timestamp,
-            'data' => ['tag' => $fixture['label']],
-        ]], JSON_THROW_ON_ERROR));
+        $event = $fixture['sequence'] === $firstSequences[$fixture['epoch']]
+            ? [
+                'type' => 2,
+                'timestamp' => $timestamp,
+                'data' => [
+                    'node' => [
+                        'type' => 2,
+                        'id' => 1,
+                        'tagName' => 'div',
+                        'attributes' => [],
+                        'childNodes' => [[
+                            'type' => 3,
+                            'id' => 2,
+                            'textContent' => $fixture['label'],
+                        ]],
+                    ],
+                ],
+            ]
+            : [
+                'type' => 5,
+                'timestamp' => $timestamp,
+                'data' => ['tag' => $fixture['label']],
+            ];
+        $payload = gzencode(json_encode([$event], JSON_THROW_ON_ERROR));
 
         if ($payload === false) {
             throw new RuntimeException('Unable to encode the compaction fixture.');
@@ -115,6 +141,26 @@ function createCompactionFixture(
     return $session;
 }
 
+/** @param list<array<string, mixed>> $events */
+function replaceCompactionChunkEvents(RecordingChunk $chunk, array $events): void
+{
+    $encoded = json_encode($events, JSON_THROW_ON_ERROR);
+    $payload = gzencode($encoded);
+
+    if ($payload === false) {
+        throw new RuntimeException('Unable to encode replacement compaction events.');
+    }
+
+    Storage::disk('local')->put($chunk->object_key, $payload);
+    $chunk->forceFill([
+        'checksum' => hash('sha256', $payload),
+        'compressed_bytes' => strlen($payload),
+        'decompressed_bytes' => strlen($encoded),
+        'event_started_at' => $events[0]['timestamp'],
+        'event_ended_at' => $events[array_key_last($events)]['timestamp'],
+    ])->save();
+}
+
 beforeEach(function (): void {
     Storage::fake('local');
     config()->set('filesystems.default', 'local');
@@ -136,7 +182,11 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
     $decoded = gzdecode(Storage::disk('local')->get($object['key']));
     $lines = array_values(array_filter(explode("\n", (string) $decoded)));
     $labels = array_map(
-        fn (string $line): string => json_decode($line, true, flags: JSON_THROW_ON_ERROR)[0]['data']['tag'],
+        function (string $line): string {
+            $event = json_decode($line, true, flags: JSON_THROW_ON_ERROR)[0];
+
+            return $event['data']['node']['childNodes'][0]['textContent'] ?? $event['data']['tag'];
+        },
         $lines,
     );
 
@@ -146,7 +196,8 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
             'new_state' => 'ready',
             'reason' => 'manifest_published',
         ])
-        ->and($labels)->toBe(['a-0', 'a-1', 'b-0'])
+        ->and($labels)->toBe(['b-0', 'a-0', 'a-1'])
+        ->and($session->epochs()->orderBy('ordinal')->pluck('epoch_id')->all())->toBe(['epoch-b', 'epoch-a'])
         ->and($object['checksum'])->toBe(hash('sha256', (string) Storage::disk('local')->get($object['key'])))
         ->and($object['bytes'])->toBe(strlen((string) Storage::disk('local')->get($object['key'])))
         ->and($session->chunks()->whereNull('purged_at')->count())->toBe(0);
@@ -154,6 +205,25 @@ it('streams chunks in epoch and sequence order then atomically publishes before 
     foreach ($temporaryKeys as $temporaryKey) {
         Storage::disk('local')->assertMissing($temporaryKey);
     }
+});
+
+it('publishes an epoch without an initial full snapshot as ready but incomplete', function (): void {
+    $session = createCompactionFixture();
+    $chunk = $session->chunks()->sole();
+    replaceCompactionChunkEvents($chunk, [[
+        'type' => 4,
+        'timestamp' => 1_000,
+        'data' => ['href' => '/missing-foundation'],
+    ]]);
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    $session->refresh();
+    expect($session->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($session->is_complete)->toBeFalse()
+        ->and($session->incomplete_reasons)->toBe(['missing_full_snapshot:epoch-1'])
+        ->and($session->manifest['incomplete'])->toBeTrue()
+        ->and($session->manifest['incomplete_reasons'])->toBe(['missing_full_snapshot:epoch-1']);
 });
 
 it('reads a valid ordered two object manifest', function (): void {
@@ -289,7 +359,10 @@ it('retains temporary chunks and schedules exact candidate cleanup when failure 
 
 it('detects candidate and persisted manifest checksum failures', function (): void {
     $candidateSession = createCompactionFixture();
-    Event::listen(CompactionCandidateWritten::class, function (CompactionCandidateWritten $event): void {
+    $temporaryKey = $candidateSession->chunks()->sole()->object_key;
+    $corruptCandidateKey = null;
+    Event::listen(CompactionCandidateWritten::class, function (CompactionCandidateWritten $event) use (&$corruptCandidateKey): void {
+        $corruptCandidateKey = $event->candidateKey;
         Storage::disk('local')->put($event->candidateKey, 'corrupt-candidate');
     });
 
@@ -298,6 +371,9 @@ it('detects candidate and persisted manifest checksum failures', function (): vo
     expect($candidateSession->fresh()->candidate_checksum_failure_count)->toBe(1)
         ->and(DB::table('operational_counters')->where('metric', 'candidate_checksum_failures')->value('value'))->toBe(1)
         ->and($candidateSession->fresh()->manifest)->toBeNull();
+    expect($corruptCandidateKey)->not->toBeNull();
+    Storage::disk('local')->assertMissing($corruptCandidateKey);
+    Storage::disk('local')->assertExists($temporaryKey);
 
     Event::forget(CompactionCandidateWritten::class);
     $manifestSession = createCompactionFixture();
@@ -313,6 +389,25 @@ it('detects candidate and persisted manifest checksum failures', function (): vo
     ))->toThrow(DomainException::class, 'manifest checksum is invalid');
     expect($manifestSession->fresh()->manifest_checksum_failure_count)->toBe(1)
         ->and(DB::table('operational_counters')->where('metric', 'manifest_checksum_failures')->value('value'))->toBe(1);
+});
+
+it('marks chunks beyond a declared terminal sequence as incomplete', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture([
+        ['epoch' => 'epoch-1', 'sequence' => 0, 'label' => 'first'],
+        ['epoch' => 'epoch-1', 'sequence' => 2, 'label' => 'contradictory-tail'],
+    ], RecordingSessionStatus::Closing);
+    $session->epochs()->sole()->forceFill(['terminal_sequence' => 0])->save();
+    $session->forceFill([
+        'closing_cutoff_at' => now()->subSecond(),
+        'status_changed_at' => now()->subMinute(),
+    ])->save();
+
+    expect(resolve(SessionFinalizer::class)->finalizeClosingSessions())->toBe(1);
+
+    $session->refresh();
+    expect($session->is_complete)->toBeFalse()
+        ->and($session->incomplete_reasons)->toContain('sequence_after_terminal:epoch-1');
 });
 
 it('never candidate-cleans a published object and resumes interrupted chunk cleanup', function (): void {
@@ -432,11 +527,14 @@ it('returns the operational counters covered by compaction and finalization', fu
         'is_complete' => false,
         'compaction_attempts' => 2,
         'compaction_duration_ms' => 15,
+        'compaction_peak_memory_bytes' => 12_345,
         'compaction_noop_count' => 1,
         'candidate_checksum_failure_count' => 1,
         'manifest_checksum_failure_count' => 1,
         'status_changed_at' => now()->subHour(),
     ])->save();
+    $session->transitionTo(RecordingSessionStatus::Failed, 'downstream_failure');
+    $session->forceFill(['status_changed_at' => now()->subHour()])->save();
     resolve(OperationalCounters::class)->increment('late_upload_rejections', 2);
 
     $snapshot = resolve(OperationalCounters::class)->snapshot(60);
@@ -451,6 +549,7 @@ it('returns the operational counters covered by compaction and finalization', fu
         'late_upload_rejections' => 2,
         'compaction_attempts' => 2,
         'compaction_duration_ms' => 15,
+        'compaction_peak_memory_bytes' => 12_345,
         'compaction_noop_duplicates' => 1,
         'candidate_checksum_failures' => 1,
         'manifest_checksum_failures' => 1,
@@ -476,5 +575,6 @@ it('really queues compaction on the database connection before a worker handles 
     expect($exitCode)->toBe(0)
         ->and(DB::table('jobs')->count())->toBe(0)
         ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($session->fresh()->manifest)->not->toBeNull();
+        ->and($session->fresh()->manifest)->not->toBeNull()
+        ->and($session->fresh()->compaction_peak_memory_bytes)->toBeGreaterThan(0);
 });

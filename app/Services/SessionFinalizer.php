@@ -127,7 +127,6 @@ class SessionFinalizer
 
             $sequences = $session->chunks()
                 ->where('epoch_id', $epoch->epoch_id)
-                ->where('sequence', '<=', $epoch->terminal_sequence)
                 ->pluck('sequence')
                 ->map(fn (mixed $sequence): int => (int) $sequence)
                 ->all();
@@ -136,6 +135,10 @@ class SessionFinalizer
             if ($missing !== []) {
                 $gapCount += count($missing);
                 $reasons[] = 'sequence_gaps:'.$epoch->epoch_id;
+            }
+
+            if ($sequences !== [] && max($sequences) > $epoch->terminal_sequence) {
+                $reasons[] = 'sequence_after_terminal:'.$epoch->epoch_id;
             }
         }
 

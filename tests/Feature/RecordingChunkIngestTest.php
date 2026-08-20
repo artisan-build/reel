@@ -538,7 +538,7 @@ it('accepts bounded out-of-order chunks within an epoch', function (): void {
     postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 0, 'grant' => $grant]))->assertAccepted();
     postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 1, 'grant' => $grant]))->assertAccepted();
 
-    expect(RecordingChunk::query()->oldest()->pluck('sequence')->all())->toBe([2, 0, 1])
+    expect(RecordingChunk::query()->orderBy('id')->pluck('sequence')->all())->toBe([2, 0, 1])
         ->and(RecordingSession::query()->sole()->max_reorder_distance)->toBe(2);
 });
 
@@ -1299,4 +1299,23 @@ it('assigns a started-at maximum expiry to newly accepted sessions', function ()
     expect($session->maximum_expires_at)->not->toBeNull()
         ->and($session->maximum_expires_at->getTimestamp() - $session->started_at->getTimestamp())
         ->toBe((int) config('reel_ingest.maximum_session_retention_seconds'));
+});
+
+it('assigns epoch chronology from server first-seen order rather than client ids', function (): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+
+    postIngestEnvelope(ingestEnvelope($context, overrides: [
+        'epoch_id' => 'z-first',
+        'grant' => $grant,
+    ]))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($context, overrides: [
+        'epoch_id' => 'a-second',
+        'grant' => $grant,
+    ]))->assertAccepted();
+
+    expect(RecordingEpoch::query()->orderBy('ordinal')->pluck('epoch_id')->all())
+        ->toBe(['z-first', 'a-second'])
+        ->and(RecordingEpoch::query()->orderBy('ordinal')->pluck('ordinal')->all())
+        ->toBe([1, 2]);
 });

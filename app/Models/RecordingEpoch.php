@@ -51,6 +51,9 @@ class RecordingEpoch extends Model
     #[\Override]
     protected function casts(): array
     {
-        return ['status' => RecordingEpochStatus::class];
+        return [
+            'status' => RecordingEpochStatus::class,
+            'ordinal' => 'integer',
+        ];
     }
 }
