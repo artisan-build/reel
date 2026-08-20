@@ -32,6 +32,11 @@ profile the repository is the application scaffold and its quality gate only —
   root `require-dev`. Production `composer install --no-dev` is unaffected, while keeping the package
   in-repo lets its standalone suite run in the same CI execution as the application. Release/split
   automation is deferred until the client is ready to distribute.
+- ⚠️ Verify the no-dev install with a REAL `composer install --no-dev`, never with
+  `composer dump-autoload --no-dev`. In a dev-built tree the latter fails with
+  `Class "ArtisanBuild\ReelClient\ReelClientServiceProvider" not found` because it regenerates the
+  autoloader from the dev `installed.json` while omitting the dev PSR-4 entry. That is an artifact of
+  the command, NOT a packaging defect — a real `composer install --no-dev` is clean (verified in B1).
 - CI constraint: fold package coverage into the existing `composer test` execution. Do not add a new
   CI job, rename the `ci` or `quality` jobs, or change the PHP matrix because branch protection pins
   the literal `ci (8.4)`, `ci (8.5)`, and `quality` contexts.
