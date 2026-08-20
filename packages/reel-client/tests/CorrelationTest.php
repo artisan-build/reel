@@ -179,8 +179,8 @@ it('serializes the exact Reel contract through stock Nightwatch without raw cred
         ->getJson('/reel-test/correlation/nightwatch', [Correlation::REQUEST_HEADER => $sessionId])
         ->assertOk()
         ->json();
-    $headers = json_decode($nightwatch['headers'], true, flags: JSON_THROW_ON_ERROR);
-    $context = json_decode($nightwatch['context'], true, flags: JSON_THROW_ON_ERROR);
+    $headers = json_decode((string) $nightwatch['headers'], true, flags: JSON_THROW_ON_ERROR);
+    $context = json_decode((string) $nightwatch['context'], true, flags: JSON_THROW_ON_ERROR);
 
     expect($headers)->not->toHaveKey('x-reel-session')
         ->and(json_encode($nightwatch, JSON_THROW_ON_ERROR))->not->toContain($grant)
