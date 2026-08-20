@@ -60,7 +60,7 @@ it('contains no node package or build manifest in repository sources', function 
 
     foreach ($iterator as $file) {
         $path = $file->getPathname();
-        if (str_contains($path, '/vendor/') || str_contains($path, '/storage/') || str_contains($path, '/bootstrap/cache/')) {
+        if (str_contains((string) $path, '/vendor/') || str_contains((string) $path, '/storage/') || str_contains((string) $path, '/bootstrap/cache/')) {
             continue;
         }
         if (in_array($file->getFilename(), ['package.json', 'package-lock.json', 'npm-shrinkwrap.json'], true)) {

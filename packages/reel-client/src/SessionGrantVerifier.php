@@ -17,9 +17,9 @@ use Lcobucci\JWT\Validation\Constraint\StrictValidAt;
 use Psr\Clock\ClockInterface;
 use Throwable;
 
-final class SessionGrantVerifier
+final readonly class SessionGrantVerifier
 {
-    public function __construct(private readonly ?ClockInterface $clock = null) {}
+    public function __construct(private ?ClockInterface $clock = null) {}
 
     public function verify(string $grant, string $publicKey): Plain
     {
