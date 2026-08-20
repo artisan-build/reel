@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanBuild\ReelClient\IssuedSessionSet;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
 use ArtisanBuild\ReelClient\SessionGrantContext;
@@ -25,12 +26,13 @@ function reelTestKeyPair(): array
 function reelSignedGrant(array $overrides = []): string
 {
     $key = reelTestKeyPair();
+    $signingKey = $overrides['signing_key'] ?? $key;
     $now = $overrides['now'] ?? new DateTimeImmutable('-1 second');
     $expires = $overrides['expires'] ?? new DateTimeImmutable('+5 minutes');
     $configuration = Configuration::forAsymmetricSigner(
         new Sha256,
-        InMemory::plainText($key['private']),
-        InMemory::plainText($key['public']),
+        InMemory::plainText($signingKey['private']),
+        InMemory::plainText($signingKey['public']),
     );
 
     return $configuration->builder()
@@ -167,6 +169,79 @@ it('rejects none and symmetric algorithm substitutions', function (): void {
     $verifier = new SessionGrantVerifier;
     expect(fn () => $verifier->verify($none, reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class)
         ->and(fn () => $verifier->verify($swapped, reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class);
+});
+
+it('rejects an otherwise valid grant signed by a different rsa key', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['signing_key' => KeyMaterial::generate()]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects an hs256 grant signed with the rsa public key as its hmac secret', function (): void {
+    $key = reelTestKeyPair();
+    $now = new DateTimeImmutable('-1 second');
+    $expires = new DateTimeImmutable('+5 minutes');
+    $configuration = Configuration::forSymmetricSigner(
+        new HmacSha256,
+        InMemory::plainText($key['public']),
+    );
+    $grant = $configuration->builder()
+        ->withHeader('typ', SessionGrant::TYPE)
+        ->issuedBy(SessionGrant::ISSUER)
+        ->permittedFor(SessionGrant::AUDIENCE)
+        ->identifiedBy('grant-id')
+        ->issuedAt($now)
+        ->canOnlyBeUsedAfter($now)
+        ->expiresAt($expires)
+        ->withClaim('application_id', 'app-id')
+        ->withClaim('credential_id', $key['credential_id'])
+        ->withClaim('session_id', str_repeat('a', 64))
+        ->withClaim('origin', 'https://host.example')
+        ->withClaim('protocol_version', 1)
+        ->withClaim('max_event_time', $expires->getTimestamp() - 60)
+        ->withClaim('ceilings', [
+            'max_chunks' => 10,
+            'max_compressed_bytes' => 1000,
+            'max_chunk_bytes' => 100,
+        ])
+        ->getToken($configuration->signer(), $configuration->signingKey())
+        ->toString();
+
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        $grant,
+        $key['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('evicts expired session ids when adding a new issuance', function (): void {
+    $session = $this->app['session']->driver();
+    $session->put('reel.issued_sessions', [
+        'expired-session' => ['expires_at' => time() - 1, 'issued_at' => time() - 20],
+        'active-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
+    ]);
+
+    (new IssuedSessionSet)->add($session, 'new-session', time() + 120, 5);
+
+    expect($session->get('reel.issued_sessions'))
+        ->not->toHaveKey('expired-session')
+        ->toHaveKeys(['active-session', 'new-session']);
+});
+
+it('evicts the oldest issued session id when the bound is exceeded', function (): void {
+    $session = $this->app['session']->driver();
+    $session->put('reel.issued_sessions', [
+        'oldest-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 20],
+        'newer-session' => ['expires_at' => time() + 60, 'issued_at' => time() - 10],
+    ]);
+
+    (new IssuedSessionSet)->add($session, 'new-session', time() + 120, 2);
+
+    expect(array_keys($session->get('reel.issued_sessions')))
+        ->toBe(['newer-session', 'new-session'])
+        ->not->toContain('oldest-session');
 });
 
 it('rejects wrong audience issuer and expired grants', function (): void {

@@ -109,6 +109,8 @@ globalThis.crypto = {
 
 const reelUploads = [];
 let reelGrantRequests = 0;
+const reelHostFetchResult = { ok: true, status: 204, headers: { get: function () { return null; } } };
+const reelHostFetchCalls = [];
 globalThis.fetch = function (url, options) {
     if (url === '/grant') {
         reelGrantRequests += 1;
@@ -127,14 +129,28 @@ globalThis.fetch = function (url, options) {
             }
         });
     }
+    if (url === '/host-request') {
+        reelHostFetchCalls.push({ receiver: this, url: url, options: options });
+        return reelHostFetchResult;
+    }
     if (url === '/upload') reelUploads.push(JSON.parse(options.body));
     return Promise.resolve({ ok: true, status: 202, headers: { get: function () { return null; } } });
 };
 
+const reelXhrOpenResult = { operation: 'open-result' };
+const reelXhrSendResult = { operation: 'send-result' };
+const reelXhrOpenCalls = [];
+const reelXhrSendCalls = [];
 globalThis.XMLHttpRequest = function () {};
 globalThis.XMLHttpRequest.prototype = {
-    open: function () {},
-    send: function () {},
+    open: function () {
+        reelXhrOpenCalls.push({ receiver: this, arguments: Array.from(arguments) });
+        return reelXhrOpenResult;
+    },
+    send: function () {
+        reelXhrSendCalls.push({ receiver: this, arguments: Array.from(arguments) });
+        return reelXhrSendResult;
+    },
     addEventListener: function () {},
     getResponseHeader: function () { return null; }
 };
@@ -163,5 +179,11 @@ globalThis.reelHarness = {
     uploads: reelUploads,
     emit: function (event) { reelEmit(event); },
     grantRequests: function () { return reelGrantRequests; },
-    recordCalls: function () { return reelRecordCalls; }
+    recordCalls: function () { return reelRecordCalls; },
+    hostFetchResult: reelHostFetchResult,
+    hostFetchCalls: reelHostFetchCalls,
+    xhrOpenResult: reelXhrOpenResult,
+    xhrSendResult: reelXhrSendResult,
+    xhrOpenCalls: reelXhrOpenCalls,
+    xhrSendCalls: reelXhrSendCalls
 };
