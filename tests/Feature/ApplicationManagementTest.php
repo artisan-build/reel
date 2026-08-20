@@ -10,7 +10,9 @@ use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Routing\Route as RoutingRoute;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
@@ -48,10 +50,11 @@ it('stores the complete application policy behind an opaque public route key', f
     $this->get(route('admin.applications.show', $application))->assertOk();
 });
 
-it('guards every named admin route from guests and non administrators', function (): void {
+it('guards every application administration route from guests and non administrators', function (): void {
     $application = Application::factory()->create();
     $adminRoutes = collect(Route::getRoutes()->getRoutes())
-        ->filter(fn (RoutingRoute $route): bool => str_starts_with((string) $route->getName(), 'admin.'))
+        ->filter(fn (RoutingRoute $route): bool => $route->uri() === 'applications'
+            || str_starts_with($route->uri(), 'applications/'))
         ->values();
 
     expect($adminRoutes->pluck('action.as')->all())->toEqualCanonicalizing([
@@ -126,6 +129,24 @@ it('rejects policy changes below the immutable inputs baseline', function (): vo
     $this->get(route('admin.applications.show', $application))
         ->assertSee('always masked')
         ->assertDontSee('Disable masking');
+});
+
+it('prevents raw SQL from weakening capture severity below the inputs baseline', function (): void {
+    $application = Application::factory()->create();
+
+    expect(fn () => DB::update(
+        "UPDATE applications SET severity = 'off' WHERE id = ?",
+        [$application->id],
+    ))->toThrow(QueryException::class);
+});
+
+it('constrains sampling percent at the database boundary', function (): void {
+    $application = Application::factory()->create();
+
+    expect(fn () => DB::update(
+        'UPDATE applications SET sampling_percent = 101 WHERE id = ?',
+        [$application->id],
+    ))->toThrow(QueryException::class);
 });
 
 it('validates allowed origins as origins rather than arbitrary URLs', function (): void {

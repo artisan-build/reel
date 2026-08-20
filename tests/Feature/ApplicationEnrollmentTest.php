@@ -168,6 +168,22 @@ it('rate limits expensive enrollment attempts per application and IP', function 
 
     $this->postJson(route('applications.enrollment.store', $application), $payload)
         ->assertTooManyRequests();
+
+    $otherApplication = Application::factory()->create();
+    $otherCode = resolve(EnrollmentCodeIssuer::class)->issue($otherApplication)->code;
+
+    $this->postJson(route('applications.enrollment.store', $otherApplication), [
+        ...$payload,
+        'enrollment_code' => $otherCode,
+    ])->assertCreated();
+
+    $rotatedCode = resolve(EnrollmentCodeIssuer::class)->issue($application)->code;
+
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.10'])
+        ->postJson(route('applications.enrollment.store', $application), [
+            ...$payload,
+            'enrollment_code' => $rotatedCode,
+        ])->assertCreated();
 });
 
 it('claims enrollment credentials with an expiration predicate and pessimistic lock', function (): void {
