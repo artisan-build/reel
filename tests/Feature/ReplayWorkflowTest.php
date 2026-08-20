@@ -650,7 +650,7 @@ it('rejects cross-session object keys before reading them', function (): void {
 it('requires slash-delimited application and session object-key boundaries', function (string $segment): void {
     $session = makeReplaySession();
     rewriteReplayManifest($session, function (array &$manifest) use ($segment): void {
-        $parts = explode('/', $manifest['objects'][0]['key']);
+        $parts = explode('/', (string) $manifest['objects'][0]['key']);
         $parts[$segment === 'application' ? 2 : 3] .= '0';
         $manifest['objects'][0]['key'] = implode('/', $parts);
     });
