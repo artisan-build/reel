@@ -24454,6 +24454,31 @@ namespace Illuminate\Support\Facades {
             }
     }
 
+namespace ArtisanBuild\ReelClient\Facades {
+    /**
+     */
+    class Reel {
+        /**
+         * @static
+         */
+        public static function sessionsUrlFor($model)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->sessionsUrlFor($model);
+        }
+
+        /**
+         * @static
+         */
+        public static function sessionsUrlForId($id)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->sessionsUrlForId($id);
+        }
+
+            }
+    }
+
 namespace Flux {
     /**
      * @see \Flux\FluxManager
@@ -30584,6 +30609,7 @@ namespace  {
     class Validator extends \Illuminate\Support\Facades\Validator {}
     class View extends \Illuminate\Support\Facades\View {}
     class Vite extends \Illuminate\Support\Facades\Vite {}
+    class Reel extends \ArtisanBuild\ReelClient\Facades\Reel {}
     class Flux extends \Flux\Flux {}
     class Livewire extends \Livewire\Livewire {}
 }

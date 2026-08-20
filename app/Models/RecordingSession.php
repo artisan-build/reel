@@ -3,18 +3,13 @@
 namespace App\Models;
 
 use App\Enums\RecordingSessionStatus;
-use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * @property RecordingSessionStatus $status
- * @property CarbonImmutable $started_at
- * @property CarbonImmutable $max_event_time
- * @property CarbonImmutable $upload_cutoff_at
- * @property CarbonImmutable|null $closing_at
+ * @mixin IdeHelperRecordingSession
  */
 #[Fillable([
     'application_id',
