@@ -9,8 +9,12 @@
         "php": "^8.3",
         "illuminate/console": "^13.0",
         "illuminate/contracts": "^13.0",
+        "illuminate/http": "^13.0",
         "illuminate/routing": "^13.0",
-        "illuminate/support": "^13.0"
+        "illuminate/session": "^13.0",
+        "illuminate/support": "^13.0",
+        "illuminate/view": "^13.0",
+        "lcobucci/jwt": "^5.6"
     },
     "require-dev": {
         "orchestra/testbench": "^11.0",
@@ -33,7 +37,10 @@
         "laravel": {
             "providers": [
                 "ArtisanBuild\\ReelClient\\ReelClientServiceProvider"
-            ]
+            ],
+            "aliases": {
+                "Reel": "ArtisanBuild\\ReelClient\\Facades\\Reel"
+            }
         }
     },
     "config": {
