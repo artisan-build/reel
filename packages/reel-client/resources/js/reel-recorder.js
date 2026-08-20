@@ -19,6 +19,7 @@
     };
     const config = Object.freeze({
         grantUrl: script && script.dataset.reelGrantUrl,
+        reelUrl: script && script.dataset.reelUrl,
         csrfToken: script && script.dataset.reelCsrfToken,
         envelopeVersion: integer('reelEnvelopeVersion', 1),
         recorderVersion: (script && script.dataset.reelRecorderVersion) || '0.1.0',
@@ -123,6 +124,19 @@
             state.reason = 'fetch_correlation_failed';
             return args;
         }
+    }
+
+    function validatedUploadUrl(value) {
+        const configured = new URL(String(config.reelUrl || ''));
+        const upload = new URL(String(value || ''));
+
+        if (! /^https?:$/.test(configured.protocol)
+            || ! /^https?:$/.test(upload.protocol)
+            || configured.origin !== upload.origin) {
+            throw new Error('upload_origin_mismatch');
+        }
+
+        return upload.href;
     }
 
     function sanitizeCss(value) {
@@ -455,6 +469,7 @@
     async function transmit(item, unload) {
         const body = JSON.stringify(item.envelope);
         if (unload && navigator.sendBeacon) {
+            // sendBeacon has no redirect mode; unload redirects cannot be made fail-closed here.
             return navigator.sendBeacon(state.session.uploadUrl, new Blob([body], { type: 'text/plain' }));
         }
 
@@ -465,6 +480,7 @@
             body: body,
             keepalive: Boolean(unload),
             credentials: 'omit',
+            redirect: 'error',
         }]);
         return response.ok;
     }
@@ -698,7 +714,7 @@
             grant: payload.grant,
             sessionId: payload.session_id,
             applicationId: payload.application_id,
-            uploadUrl: payload.upload_url,
+            uploadUrl: validatedUploadUrl(payload.upload_url),
             maxEventTime: payload.max_event_time,
         };
         window.sessionStorage.setItem('artisan-build.reel.session', JSON.stringify(session));

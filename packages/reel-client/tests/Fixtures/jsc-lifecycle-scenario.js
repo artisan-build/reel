@@ -103,6 +103,7 @@ Promise.all([noConsentStart, firstStart, secondStart]).then(async function (resu
         initial: initial,
         nonInterference: nonInterference,
         requestHeaders: requestHeaders,
+        uploadGrant: reelHarness.grant(),
         errorMarkers: errorMarkers,
         hidden: hidden,
         restarted: restarted,

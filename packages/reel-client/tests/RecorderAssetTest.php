@@ -73,6 +73,13 @@ it('serves immutable precompiled rrweb and recorder assets', function (): void {
         ->assertSee('CompressionStream', false);
 });
 
+it('publishes the configured Reel origin to the recorder adapter', function (): void {
+    config()->set('reel.url', 'https://reel.example/base');
+
+    expect(Blade::render('<x-reel::recorder />'))
+        ->toContain('data-reel-url="https://reel.example/base"');
+});
+
 it('executes the shipped sanitizer against hostile snapshots and mutations', function (): void {
     $result = reelRunJavaScriptCore('jsc-sanitizer-scenario.js');
     $nodes = $result['snapshot']['data']['node']['childNodes'];
@@ -211,16 +218,37 @@ it('executes fetch and xhr wrappers without changing host semantics', function (
 
 it('correlates only same-origin application requests without attaching the upload grant', function (): void {
     $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+    $sessionId = str_repeat('a', 64);
 
     expect($result['requestHeaders'])->toBe([
-        'fetch' => 'session-1',
+        'fetch' => $sessionId,
         'fetchGrant' => null,
-        'xhr' => 'session-1',
+        'xhr' => $sessionId,
         'xhrGrant' => null,
-        'livewire' => 'session-1',
+        'livewire' => $sessionId,
         'crossFetch' => null,
         'crossXhr' => null,
-    ]);
+    ])->and(json_encode($result['requestHeaders'], JSON_THROW_ON_ERROR))
+        ->not->toContain($result['uploadGrant']);
+});
+
+it('fails upload fetches closed instead of forwarding grants across redirects', function (): void {
+    $result = reelRunJavaScriptCore('jsc-upload-redirect-scenario.js');
+
+    expect($result['redirectTargets'])->toBe([])
+        ->and($result['redirect'])->toBe('error')
+        ->and($result['pendingUploads'])->toBe(1);
+});
+
+it('rejects an upload url outside the configured Reel origin before storing it', function (): void {
+    $result = reelRunJavaScriptCore('jsc-upload-origin-scenario.js');
+
+    expect($result['status'])->toMatchArray([
+        'state' => 'stopped',
+        'incomplete' => true,
+        'reason' => 'start_failed',
+    ])->and($result['storedSession'])->toBeNull()
+        ->and($result['redirectTargets'])->toBe([]);
 });
 
 it('records sanitized browser and server error markers only for same-origin responses', function (): void {
@@ -251,7 +279,7 @@ it('leaves host rendering unchanged when reel is unconfigured or grant issuance 
         '<main>byte-identical-host-response</main><x-reel::recorder />',
     ));
     config()->set([
-        'reel.url' => null,
+        'reel.url' => 'https://reel.example',
         'reel.application_id' => null,
         'reel.private_key' => null,
     ]);

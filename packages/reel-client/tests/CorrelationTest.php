@@ -7,6 +7,10 @@ use ArtisanBuild\ReelClient\Tests\TestCase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Route;
+use Laravel\Nightwatch\Compatibility;
+use Laravel\Nightwatch\Sensors\RequestSensor;
+use Laravel\Nightwatch\State\RequestState;
+use Laravel\Nightwatch\UserProvider;
 
 uses(TestCase::class);
 
@@ -37,6 +41,34 @@ function reelIssuedEntry(int $issuedAt = 0, int $expiresAt = 0, string $path = '
     ];
 }
 
+/** @return array<string, mixed> */
+function reelStockNightwatchPayload(Request $request): array
+{
+    Compatibility::boot(app());
+    $user = new UserProvider(
+        withAuth: fn (callable $callback): string => '',
+        userDetailsResolverResolver: fn (): null => null,
+        reportResolver: fn (): Closure => fn (Throwable $exception, bool $handled): null => null,
+    );
+    $state = new RequestState(
+        timestamp: microtime(true),
+        trace: 'nightwatch-contract-trace',
+        id: 'nightwatch-contract-request',
+        deploy: 'test',
+        server: 'test',
+        currentExecutionStageStartedAtMicrotime: microtime(true),
+        user: $user,
+    );
+    [, $serialize] = (new RequestSensor(
+        requestState: $state,
+        capturePayload: false,
+        redactPayloadFields: [],
+        redactHeaders: [],
+    ))($request, response('', 200));
+
+    return $serialize();
+}
+
 beforeEach(function (): void {
     config()->set([
         'reel.url' => 'https://reel.example',
@@ -52,6 +84,10 @@ beforeEach(function (): void {
         'request_headers' => $request->headers->all(),
     ]));
     Route::middleware('web')->get('/reel-test/correlation/failure', fn () => response('failed', 500));
+    Route::middleware('web')->get(
+        '/reel-test/correlation/nightwatch',
+        fn (Request $request) => response()->json(reelStockNightwatchPayload($request)),
+    );
     Route::middleware(['web', 'reel.hidden'])->get('/reel-test/correlation/hidden', fn () => response()->json(['reel' => Context::get('reel')], 500));
     Route::middleware('web')->get('/reel-test/correlation/exception', function (): never {
         throw new ReelCorrelationTestException('private exception message');
@@ -130,20 +166,37 @@ it('pins the exact Context and redacted request-header payload for every export 
     ]],
 ]);
 
-it('exports the same provider-neutral payload for stock Nightwatch and Hone transports', function (string $transport): void {
-    $sessionId = str_repeat('7', 64);
-    config()->set('reel.correlation.context_export', 'session_id');
+it('serializes the exact Reel contract through stock Nightwatch without raw credentials', function (
+    string $mode,
+    ?array $expected,
+): void {
+    $adapter = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+    $sessionId = $adapter['requestHeaders']['fetch'];
+    $grant = $adapter['uploadGrant'];
+    config()->set('reel.correlation.context_export', $mode);
 
-    $payload = $this->withSession(['reel.issued_sessions' => [$sessionId => reelIssuedEntry()]])
-        ->getJson('/reel-test/correlation?transport='.$transport, [Correlation::REQUEST_HEADER => $sessionId])
+    $nightwatch = $this->withSession(['reel.issued_sessions' => [$sessionId => reelIssuedEntry()]])
+        ->getJson('/reel-test/correlation/nightwatch', [Correlation::REQUEST_HEADER => $sessionId])
         ->assertOk()
-        ->json('reel');
+        ->json();
+    $headers = json_decode($nightwatch['headers'], true, flags: JSON_THROW_ON_ERROR);
+    $context = json_decode($nightwatch['context'], true, flags: JSON_THROW_ON_ERROR);
 
-    expect($payload)->toBe([
-        'session_id' => $sessionId,
+    expect($headers)->not->toHaveKey('x-reel-session')
+        ->and(json_encode($nightwatch, JSON_THROW_ON_ERROR))->not->toContain($grant)
+        ->and($context)->toBe($expected === null ? [] : ['reel' => $expected]);
+})->with([
+    'off' => ['off', null],
+    'session id' => ['session_id', [
+        'session_id' => str_repeat('a', 64),
         'binding' => 'host_bound',
-    ]);
-})->with(['nightwatch-saas', 'hone']);
+    ]],
+    'session id and url' => ['session_id_and_url', [
+        'session_id' => str_repeat('a', 64),
+        'binding' => 'host_bound',
+        'url' => 'https://reel.example/applications/application-id/sessions/'.str_repeat('a', 64),
+    ]],
+]);
 
 it('adds and clears Context across sequential success requests in one process', function (): void {
     $sessionId = str_repeat('8', 64);
@@ -259,13 +312,15 @@ it('exports an ambiguity filter without selecting one of multiple plausible tabs
         ->not->toContain($first, $second);
 });
 
-it('keeps Nightwatch and Hone optional and unmodified', function (): void {
+it('keeps stock Nightwatch dev-only and unmodified', function (): void {
     $root = json_decode(file_get_contents(dirname(__DIR__, 3).'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
     $package = json_decode(file_get_contents(dirname(__DIR__).'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
     $encoded = json_encode([$root, $package], JSON_THROW_ON_ERROR);
 
     expect(array_keys($root['require']))->not->toContain('laravel/nightwatch', 'laravel/hone')
+        ->and(array_keys($root['require-dev']))->not->toContain('laravel/nightwatch', 'laravel/hone')
         ->and(array_keys($package['require']))->not->toContain('laravel/nightwatch', 'laravel/hone')
+        ->and($package['require-dev']['laravel/nightwatch'])->toBe('^1.28')
         ->and($root['repositories'])->toBe([[
             'type' => 'path',
             'url' => 'packages/reel-client',

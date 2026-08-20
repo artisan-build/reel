@@ -92,7 +92,8 @@
             "@test:reel-client"
         ],
         "test:reel-client": [
-            "@php vendor/bin/pest --configuration=packages/reel-client/phpunit.xml"
+            "composer install --working-dir=packages/reel-client --no-interaction --prefer-dist",
+            "@php packages/reel-client/vendor/bin/pest --configuration=packages/reel-client/phpunit.xml"
         ],
         "ide-helper": [
             "@php artisan ide-helper:generate",

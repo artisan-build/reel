@@ -5,6 +5,7 @@ globalThis.document = {
         dataset: {
             reelTesting: 'true',
             reelGrantUrl: '/grant',
+            reelUrl: 'https://reel.example',
             reelCsrfToken: 'csrf',
             reelEnvelopeVersion: '1',
             reelRecorderVersion: '0.1.0',
@@ -69,6 +70,8 @@ globalThis.URL = class {
         const absolute = /^(https?:\/\/[^/]+)([^?#]*)/.exec(String(value));
         this.origin = absolute ? absolute[1] : String(base).replace(/\/$/, '');
         this.pathname = absolute ? (absolute[2] || '/') : (String(value).split(/[?#]/)[0] || '/');
+        this.protocol = this.origin.split(':', 1)[0] + ':';
+        this.href = this.origin + this.pathname;
     }
 };
 
@@ -121,7 +124,12 @@ globalThis.crypto = {
 };
 
 const reelUploads = [];
+const reelRedirectTargets = [];
+const reelUploadOptions = [];
+let reelRedirectUploads = false;
+let reelGrantUploadUrl = 'https://reel.example/upload';
 let reelGrantRequests = 0;
+const reelSessionId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const reelBody = 'byte-identical-response-body';
 function reelResponse(status, responseHeaders) {
     return {
@@ -149,9 +157,9 @@ function reelOriginalFetch(url, options) {
             json: function () {
                 return Promise.resolve({
                     grant: 'grant-' + reelGrantRequests,
-                    session_id: 'session-' + reelGrantRequests,
+                    session_id: reelSessionId,
                     application_id: 'application-1',
-                    upload_url: '/upload',
+                    upload_url: reelGrantUploadUrl,
                     max_event_time: Math.floor(Date.now() / 1000) + 60
                 });
             }
@@ -180,7 +188,16 @@ function reelOriginalFetch(url, options) {
         return Promise.resolve(reelResponse(500));
     }
     if (url === '/host-reject') return reelRejectedFetchResult;
-    if (url === '/upload') reelUploads.push(JSON.parse(options.body));
+    if (url === 'https://reel.example/upload') {
+        reelUploadOptions.push(options);
+        if (reelRedirectUploads) {
+            if (options.redirect === 'error') return Promise.reject(new Error('redirect_blocked'));
+            reelRedirectTargets.push(options.body);
+            return Promise.resolve(reelResponse(202));
+        }
+        reelUploads.push(JSON.parse(options.body));
+    }
+    if (url === 'https://host.example/capture') reelRedirectTargets.push(options.body);
     return Promise.resolve({ ok: true, status: 202, headers: { get: function () { return null; } } });
 }
 globalThis.fetch = reelOriginalFetch;
@@ -241,8 +258,13 @@ globalThis.reelHarness = {
     timeouts: reelTimeouts,
     storage: reelStorage,
     uploads: reelUploads,
+    redirectTargets: reelRedirectTargets,
+    uploadOptions: reelUploadOptions,
+    redirectUploads: function () { reelRedirectUploads = true; },
+    grantUploadUrl: function (url) { reelGrantUploadUrl = url; },
     emit: function (event) { reelEmit(event); },
     grantRequests: function () { return reelGrantRequests; },
+    grant: function () { return 'grant-' + reelGrantRequests; },
     recordCalls: function () { return reelRecordCalls; },
     hostFetchResults: reelHostFetchResults,
     rejectedFetchResult: reelRejectedFetchResult,

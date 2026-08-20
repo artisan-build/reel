@@ -4,6 +4,7 @@
         defer
         src="{{ route('reel.assets.recorder') }}"
         data-reel-grant-url="{{ route('reel.session-grants.store') }}"
+        data-reel-url="{{ config('reel.url') }}"
         data-reel-csrf-token="{{ csrf_token() }}"
         data-reel-envelope-version="{{ config('reel.recorder.envelope_version') }}"
         data-reel-recorder-version="{{ config('reel.recorder.version') }}"
