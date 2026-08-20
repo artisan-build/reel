@@ -13,6 +13,7 @@ abstract class TestCase extends Orchestra
     {
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('r', 32)));
         $app['config']->set('session.driver', 'array');
+        $app['config']->set('reel.host_mode', true);
     }
 
     /**
