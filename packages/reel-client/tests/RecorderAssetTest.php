@@ -144,9 +144,9 @@ it('stops recording at the signed maximum event time', function (): void {
 it('produces reconstructable FullSnapshot-first epochs with monotonic sequences', function (): void {
     $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
     $uploads = $result['uploads'];
-    $firstEvents = json_decode(base64_decode($uploads[0]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
-    $secondEvents = json_decode(base64_decode($uploads[1]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
-    $newEpochEvents = json_decode(base64_decode($uploads[2]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
+    $firstEvents = json_decode(base64_decode((string) $uploads[0]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
+    $secondEvents = json_decode(base64_decode((string) $uploads[1]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
+    $newEpochEvents = json_decode(base64_decode((string) $uploads[2]['payload'], true), true, flags: JSON_THROW_ON_ERROR);
 
     expect($result['initial']['bufferedTypes'])->toBe([2, 4, 3])
         ->and($uploads)->toHaveCount(3)
