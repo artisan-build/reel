@@ -27,7 +27,7 @@ final class EnvironmentFile
             $pattern = '/^(?:export\s+)?'.preg_quote($key, '/').'\s*=.*$/m';
 
             if (preg_match($pattern, $contents) === 1) {
-                $contents = preg_replace($pattern, $line, $contents, 1) ?? $contents;
+                $contents = preg_replace_callback($pattern, static fn (): string => $line, $contents, 1) ?? $contents;
             } else {
                 if ($contents !== '' && ! str_ends_with($contents, "\n")) {
                     $contents .= $eol;

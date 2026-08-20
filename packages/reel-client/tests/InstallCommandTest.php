@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanBuild\ReelClient\EnvironmentFile;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\Tests\TestCase;
 use Illuminate\Http\Client\Request;
@@ -74,4 +75,18 @@ it('does not install a private key when enrollment fails', function (): void {
 
     unlink($directory.'/.env');
     rmdir($directory);
+});
+
+it('writes env replacement values without interpreting regex backreferences', function (): void {
+    $path = sys_get_temp_dir().'/reel-env-'.bin2hex(random_bytes(8));
+    file_put_contents($path, "UNCHANGED=exact\nREEL_APPLICATION_ID=old\nAFTER=exact\n");
+    $value = 'tenant$1\\path#part=value';
+
+    (new EnvironmentFile)->write($path, ['REEL_APPLICATION_ID' => $value]);
+
+    expect(file_get_contents($path))->toBe(
+        "UNCHANGED=exact\nREEL_APPLICATION_ID=\"tenant\$1\\\\path#part=value\"\nAFTER=exact\n",
+    );
+
+    unlink($path);
 });

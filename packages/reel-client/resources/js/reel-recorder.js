@@ -32,15 +32,20 @@
         maxRetries: integer('reelMaxRetries', 5),
         circuitFailures: integer('reelCircuitFailures', 5),
         circuitCooldown: integer('reelCircuitCooldown', 60000),
+        testing: Boolean(script && script.dataset.reelTesting === 'true'),
     });
     const state = {
         status: 'idle',
         started: false,
+        startPromise: null,
+        hiddenLatched: false,
         hooksInstalled: false,
         lifecycleInstalled: false,
         incomplete: false,
         reason: null,
         events: [],
+        hasFullSnapshot: false,
+        pendingMeta: null,
         bufferBytes: 0,
         pending: [],
         sequence: 0,
@@ -48,6 +53,7 @@
         session: null,
         stopRrweb: null,
         timer: null,
+        expiryTimer: null,
         sending: false,
         consecutiveFailures: 0,
         circuitUntil: 0,
@@ -81,8 +87,34 @@
 
         return value
             .replace(/@import\s+[^;{}]+;?/gi, '')
-            .replace(/url\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)/gi, 'none')
+            .replace(/url\s*\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)/gi, 'none')
             .replace(/expression\s*\([^)]*\)/gi, '');
+    }
+
+    function sanitizeCssMutation(value) {
+        if (typeof value === 'string') {
+            const sanitized = sanitizeCss(value);
+            return /url\s*\(/i.test(sanitized) ? null : sanitized;
+        }
+        if (Array.isArray(value)) {
+            const sanitized = [];
+            for (const item of value) {
+                const clean = sanitizeCssMutation(item);
+                if (clean === null) return null;
+                sanitized.push(clean);
+            }
+            return sanitized;
+        }
+        if (value && typeof value === 'object') {
+            const sanitized = {};
+            for (const key of Object.keys(value)) {
+                const clean = sanitizeCssMutation(value[key]);
+                if (clean === null) return null;
+                sanitized[key] = clean;
+            }
+            return sanitized;
+        }
+        return value;
     }
 
     function sanitizeInlineStyle(value) {
@@ -258,6 +290,11 @@
             if (event.data.source === 5 && Object.prototype.hasOwnProperty.call(event.data, 'text')) {
                 event.data.text = SANITIZER_RULES.maskText;
             }
+            if ([8, 13, 15].includes(event.data.source)) {
+                const data = sanitizeCssMutation(event.data);
+                if (data === null) return null;
+                event.data = data;
+            }
             if (typeof event.data.href === 'string') event.data.href = stripQueryAndFragment(event.data.href);
         }
 
@@ -283,23 +320,48 @@
 
     function bufferEvent(rawEvent) {
         if (!state.started) return;
+        if (state.session && state.session.maxEventTime * 1000 <= Date.now()) {
+            stop('max_event_time', false);
+            return;
+        }
         const event = sanitizeEvent(rawEvent);
         if (!event) {
             markIncomplete('sanitization_failed');
             return;
         }
 
+        if (!state.hasFullSnapshot) {
+            if (event.type === 4) {
+                state.pendingMeta = event;
+                return;
+            }
+            if (event.type !== 2) {
+                markIncomplete('missing_full_snapshot');
+                return;
+            }
+            state.hasFullSnapshot = true;
+        }
+
+        const appended = appendEvent(event);
+        if (appended && event.type === 2 && state.pendingMeta) {
+            appendEvent(state.pendingMeta);
+            state.pendingMeta = null;
+        }
+        if (state.bufferBytes >= config.flushBytes) void flush(false);
+    }
+
+    function appendEvent(event) {
         const encoded = JSON.stringify(event);
         const size = byteLength(encoded);
         if (state.events.length + 1 > config.maxBufferEvents
             || state.bufferBytes + size > config.maxBufferBytes) {
             markIncomplete('buffer_ceiling');
-            return;
+            return false;
         }
 
         state.events.push(event);
         state.bufferBytes += size;
-        if (state.bufferBytes >= config.flushBytes) void flush(false);
+        return true;
     }
 
     async function gzip(value) {
@@ -431,9 +493,18 @@
 
     function inspectResponse(response, method, url) {
         try {
-            if (response && response.headers && response.headers.get('X-Reel-Capture') === 'hidden') {
+            const capturePolicy = response && response.headers && response.headers.get('X-Reel-Capture');
+            if (capturePolicy === 'hidden') {
+                state.hiddenLatched = true;
+                state.session = null;
+                try { window.sessionStorage.removeItem('artisan-build.reel.session'); } catch (_) {}
                 stop('hidden', true);
                 return;
+            }
+            if (capturePolicy === 'allowed' && state.hiddenLatched) {
+                state.hiddenLatched = false;
+                state.status = 'idle';
+                state.reason = null;
             }
             if (response && response.status >= 500) {
                 bufferEvent({
@@ -569,29 +640,49 @@
         return session;
     }
 
-    async function start(options) {
-        if (state.started) return status();
+    function start(options) {
+        if (state.started) return Promise.resolve(status());
+        if (state.startPromise) return state.startPromise;
         const settings = options || {};
         if (settings.consent !== true) {
             state.status = 'awaiting_consent';
-            return status();
+            return Promise.resolve(status());
         }
         if (settings.refuseOnGpc === true && navigator.globalPrivacyControl === true) {
             state.status = 'refused_gpc';
-            return status();
+            return Promise.resolve(status());
+        }
+        if (state.hiddenLatched) {
+            state.status = 'hidden';
+            return Promise.resolve(status());
         }
 
+        state.startPromise = beginStart().finally(() => {
+            state.startPromise = null;
+        });
+
+        return state.startPromise;
+    }
+
+    async function beginStart() {
         state.status = 'starting';
         try {
             installHooks();
             installLifecycle();
             state.session = await acquireSession();
+            if (state.hiddenLatched) throw new Error('hidden');
             state.epochId = randomId();
             state.sequence = 0;
+            state.incomplete = false;
+            state.reason = null;
+            state.hasFullSnapshot = false;
+            state.pendingMeta = null;
             state.maskedNodeIds.clear();
             state.styleNodeIds.clear();
             state.childNodeIds.clear();
             if (!window.rrweb || typeof window.rrweb.record !== 'function') throw new Error('rrweb_unavailable');
+            state.started = true;
+            state.status = 'recording';
             state.stopRrweb = window.rrweb.record({
                 emit: bufferEvent,
                 maskAllInputs: true,
@@ -601,11 +692,19 @@
                 collectFonts: false,
                 inlineImages: false,
             });
-            state.started = true;
-            state.status = 'recording';
             state.timer = window.setInterval(() => void flush(false), config.batchInterval);
-        } catch (_) {
-            markIncomplete('start_failed');
+            const expiresIn = state.session.maxEventTime * 1000 - Date.now();
+            if (expiresIn <= 0) {
+                stop('max_event_time', false);
+            } else {
+                state.expiryTimer = window.setTimeout(() => stop('max_event_time', false), expiresIn);
+            }
+        } catch (error) {
+            if (error && error.message === 'hidden') {
+                stop('hidden', true);
+            } else {
+                markIncomplete('start_failed');
+            }
         }
         return status();
     }
@@ -617,6 +716,8 @@
         }
         if (state.timer) window.clearInterval(state.timer);
         state.timer = null;
+        if (state.expiryTimer) window.clearTimeout(state.expiryTimer);
+        state.expiryTimer = null;
         state.started = false;
         state.status = reason === 'hidden' ? 'hidden' : 'stopped';
         state.reason = reason || state.reason;
@@ -641,7 +742,15 @@
         });
     }
 
-    const api = Object.freeze({ start: start, stop: () => stop('host_stop', false), status: status });
+    const testing = config.testing ? {
+        __testing: Object.freeze({
+            flush: flush,
+            inspectResponse: inspectResponse,
+            sanitizeEvent: sanitizeEvent,
+            state: () => state,
+        }),
+    } : {};
+    const api = Object.freeze({ start: start, stop: () => stop('host_stop', false), status: status, ...testing });
     state.api = api;
     window[singletonKey] = state;
     window.Reel = api;

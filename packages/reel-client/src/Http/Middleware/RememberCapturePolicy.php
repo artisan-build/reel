@@ -21,8 +21,8 @@ final class RememberCapturePolicy
             $request->session()->save();
         }
 
-        if ($hidden) {
-            $response->headers->set(CapturePolicy::RESPONSE_HEADER, 'hidden');
+        if (CapturePolicy::isDocumentRequest($request)) {
+            $response->headers->set(CapturePolicy::RESPONSE_HEADER, $hidden ? 'hidden' : 'allowed');
         }
 
         return $response;

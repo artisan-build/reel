@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
+use ArtisanBuild\ReelClient\SessionGrantContext;
 use ArtisanBuild\ReelClient\SessionGrantVerifier;
 use ArtisanBuild\ReelClient\Tests\TestCase;
 use Lcobucci\JWT\Configuration;
@@ -36,19 +37,41 @@ function reelSignedGrant(array $overrides = []): string
         ->withHeader('typ', $overrides['typ'] ?? SessionGrant::TYPE)
         ->issuedBy($overrides['issuer'] ?? SessionGrant::ISSUER)
         ->permittedFor($overrides['audience'] ?? SessionGrant::AUDIENCE)
-        ->identifiedBy('grant-id')
+        ->identifiedBy($overrides['grant_id'] ?? 'grant-id')
         ->issuedAt($now)
-        ->canOnlyBeUsedAfter($now)
+        ->canOnlyBeUsedAfter($overrides['not_before'] ?? $now)
         ->expiresAt($expires)
-        ->withClaim('application_id', 'app-id')
-        ->withClaim('credential_id', $key['credential_id'])
-        ->withClaim('session_id', 'session-id')
-        ->withClaim('origin', 'https://host.example')
-        ->withClaim('protocol_version', 1)
-        ->withClaim('max_event_time', $expires->getTimestamp() - 60)
-        ->withClaim('ceilings', ['max_chunks' => 10, 'max_compressed_bytes' => 1000, 'max_chunk_bytes' => 100])
+        ->withClaim('application_id', $overrides['application_id'] ?? 'app-id')
+        ->withClaim('credential_id', $overrides['credential_id'] ?? $key['credential_id'])
+        ->withClaim('session_id', $overrides['session_id'] ?? str_repeat('a', 64))
+        ->withClaim('origin', $overrides['origin'] ?? 'https://host.example')
+        ->withClaim('protocol_version', $overrides['protocol_version'] ?? 1)
+        ->withClaim('max_event_time', $overrides['max_event_time'] ?? $expires->getTimestamp() - 60)
+        ->withClaim('ceilings', $overrides['ceilings'] ?? [
+            'max_chunks' => 10,
+            'max_compressed_bytes' => 1000,
+            'max_chunk_bytes' => 100,
+        ])
         ->getToken($configuration->signer(), $configuration->signingKey())
         ->toString();
+}
+
+function reelGrantContext(string $sessionId = '', array $overrides = []): SessionGrantContext
+{
+    $sessionId = $sessionId === '' ? str_repeat('a', 64) : $sessionId;
+
+    return new SessionGrantContext(
+        applicationId: $overrides['application_id'] ?? 'app-id',
+        credentialId: $overrides['credential_id'] ?? reelTestKeyPair()['credential_id'],
+        allowedOrigins: $overrides['allowed_origins'] ?? ['https://host.example'],
+        sessionId: $sessionId,
+        maximumCeilings: $overrides['maximum_ceilings'] ?? [
+            'max_chunks' => 100,
+            'max_compressed_bytes' => 10_000,
+            'max_chunk_bytes' => 1000,
+        ],
+        maximumLifetimeSeconds: $overrides['maximum_lifetime'] ?? 1860,
+    );
 }
 
 beforeEach(function (): void {
@@ -70,7 +93,18 @@ it('issues an explicitly typed asymmetric grant only after consent', function ()
         ->assertHeader('Cache-Control', 'no-store, private')
         ->assertHeader('Referrer-Policy', 'no-referrer');
 
-    $token = (new SessionGrantVerifier)->verify($response->json('grant'), reelTestKeyPair()['public']);
+    $token = (new SessionGrantVerifier)->verify(
+        $response->json('grant'),
+        reelTestKeyPair()['public'],
+        reelGrantContext((string) $response->json('session_id'), [
+            'allowed_origins' => ['http://localhost'],
+            'maximum_ceilings' => [
+                'max_chunks' => (int) config('reel.grant.max_chunks'),
+                'max_compressed_bytes' => (int) config('reel.grant.max_compressed_bytes'),
+                'max_chunk_bytes' => (int) config('reel.grant.max_chunk_bytes'),
+            ],
+        ]),
+    );
 
     expect($token->headers()->get('typ'))->toBe(SessionGrant::TYPE)
         ->and($token->headers()->get('alg'))->toBe(SessionGrant::ALGORITHM)
@@ -131,8 +165,8 @@ it('rejects none and symmetric algorithm substitutions', function (): void {
         ->toString();
 
     $verifier = new SessionGrantVerifier;
-    expect(fn () => $verifier->verify($none, reelTestKeyPair()['public']))->toThrow(DomainException::class)
-        ->and(fn () => $verifier->verify($swapped, reelTestKeyPair()['public']))->toThrow(DomainException::class);
+    expect(fn () => $verifier->verify($none, reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class)
+        ->and(fn () => $verifier->verify($swapped, reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class);
 });
 
 it('rejects wrong audience issuer and expired grants', function (): void {
@@ -150,14 +184,135 @@ it('rejects wrong audience issuer and expired grants', function (): void {
         'audience' => 'wrong-audience',
         'now' => $validTime,
         'expires' => new DateTimeImmutable('2026-08-20 12:01:00 UTC'),
-    ]), reelTestKeyPair()['public']))->toThrow(DomainException::class)
+    ]), reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class)
         ->and(fn () => $verifier->verify(reelSignedGrant([
             'issuer' => 'wrong-issuer',
             'now' => $validTime,
             'expires' => new DateTimeImmutable('2026-08-20 12:01:00 UTC'),
-        ]), reelTestKeyPair()['public']))->toThrow(DomainException::class)
+        ]), reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class)
         ->and(fn () => $verifier->verify(reelSignedGrant([
             'now' => new DateTimeImmutable('2026-08-20 11:00:00 UTC'),
             'expires' => new DateTimeImmutable('2026-08-20 11:30:00 UTC'),
-        ]), reelTestKeyPair()['public']))->toThrow(DomainException::class);
+        ]), reelTestKeyPair()['public'], reelGrantContext()))->toThrow(DomainException::class);
+});
+
+it('rejects a grant bound to another application', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['application_id' => 'other-app']),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects a grant bound to another credential', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['credential_id' => 'sha256:other']),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects a grant bound to a disallowed origin', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['origin' => 'https://attacker.example']),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects a grant bound to another session', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['session_id' => str_repeat('b', 64)]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects an unsupported protocol version', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['protocol_version' => 2]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects nonpositive grant ceilings', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['ceilings' => [
+            'max_chunks' => 0,
+            'max_compressed_bytes' => 1000,
+            'max_chunk_bytes' => 100,
+        ]]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects grant ceilings above configured maxima', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['ceilings' => [
+            'max_chunks' => 101,
+            'max_compressed_bytes' => 1000,
+            'max_chunk_bytes' => 100,
+        ]]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects grant ceilings with noninteger values', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['ceilings' => [
+            'max_chunks' => '10',
+            'max_compressed_bytes' => 1000,
+            'max_chunk_bytes' => 100,
+        ]]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects incoherent event and expiration timing', function (): void {
+    $expires = new DateTimeImmutable('+5 minutes');
+
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant([
+            'expires' => $expires,
+            'max_event_time' => $expires->getTimestamp(),
+        ]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects a not-before time that differs from issuance', function (): void {
+    $issuedAt = new DateTimeImmutable('-1 minute');
+
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant([
+            'now' => $issuedAt,
+            'not_before' => $issuedAt->modify('+30 seconds'),
+        ]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects malformed session identifiers even when the expected binding matches', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant(['session_id' => 'session-id']),
+        reelTestKeyPair()['public'],
+        reelGrantContext('session-id'),
+    ))->toThrow(DomainException::class);
+});
+
+it('rejects grants that exceed the configured lifetime', function (): void {
+    expect(fn () => (new SessionGrantVerifier)->verify(
+        reelSignedGrant([
+            'now' => new DateTimeImmutable('-1 second'),
+            'expires' => new DateTimeImmutable('+1 hour'),
+        ]),
+        reelTestKeyPair()['public'],
+        reelGrantContext(),
+    ))->toThrow(DomainException::class);
 });
