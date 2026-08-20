@@ -167,6 +167,10 @@ function reelOriginalFetch(url, options) {
         reelHostFetchCalls.push({ receiver: this, url: url, options: options });
         return Promise.resolve(reelResponse(503));
     }
+    if (url === '/livewire/update') {
+        reelHostFetchCalls.push({ receiver: this, url: url, options: options });
+        return Promise.resolve(reelResponse(200));
+    }
     if (url === '/host-server-error') {
         reelHostFetchCalls.push({ receiver: this, url: url, options: options });
         return Promise.resolve(reelResponse(500, { 'x-reel-server-error': '1' }));

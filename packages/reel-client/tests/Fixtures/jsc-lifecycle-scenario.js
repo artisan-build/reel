@@ -22,6 +22,7 @@ Promise.all([noConsentStart, firstStart, secondStart]).then(async function (resu
     try { await rejectedFetch; } catch (error) { rejectedWithSameError = error === reelHarness.rejectedError; }
 
     await window.fetch('/host-error', { method: 'POST', body: 'private-request-body' });
+    await window.fetch('/livewire/update', { method: 'POST', headers: { 'X-Livewire': 'true' } });
     await window.fetch('/host-server-error');
     await window.fetch('https://other.example/error');
     const xhrError = new XMLHttpRequest();
@@ -69,6 +70,7 @@ Promise.all([noConsentStart, firstStart, secondStart]).then(async function (resu
         fetchGrant: reelHarness.hostFetchCalls.filter(function (call) { return call.url === '/host-request'; })[0].options.headers.get('Authorization'),
         xhr: xhr._headers['x-reel-session'] || null,
         xhrGrant: xhr._headers.authorization || null,
+        livewire: reelHarness.hostFetchCalls.filter(function (call) { return call.url === '/livewire/update'; })[0].options.headers.get('X-Reel-Session'),
         crossFetch: reelHarness.hostFetchCalls.filter(function (call) { return call.url === 'https://other.example/error'; })[0].options
             ? reelHarness.hostFetchCalls.filter(function (call) { return call.url === 'https://other.example/error'; })[0].options.headers || null
             : null,

@@ -217,6 +217,7 @@ it('correlates only same-origin application requests without attaching the uploa
         'fetchGrant' => null,
         'xhr' => 'session-1',
         'xhrGrant' => null,
+        'livewire' => 'session-1',
         'crossFetch' => null,
         'crossXhr' => null,
     ]);
