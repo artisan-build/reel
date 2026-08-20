@@ -439,6 +439,19 @@ it('makes exact retries no-op and retains first bytes on conflicting retries', f
         ->and($chunk->recordingSession->conflicting_retry_count)->toBe(1);
 });
 
+it('rejects a compressed payload whose declared checksum does not match', function (): void {
+    $context = ingestContext();
+    $envelope = ingestEnvelope($context);
+    $envelope['checksum'] = str_repeat('0', 64);
+
+    postIngestEnvelope($envelope)
+        ->assertUnprocessable()
+        ->assertJsonPath('reason', 'checksum_mismatch');
+
+    expect(RecordingSession::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+});
+
 it('accepts bounded out-of-order chunks within an epoch', function (): void {
     $context = ingestContext();
     $grant = ingestGrant($context);
