@@ -127,13 +127,27 @@ function symmetricIngestGrant(array $context): string
         InMemory::plainText(str_repeat('symmetric-secret-', 4)),
     );
 
+    $application = $context['application'];
+
     return $configuration->builder()
         ->withHeader('typ', SessionGrant::TYPE)
         ->issuedBy(SessionGrant::ISSUER)
         ->permittedFor(SessionGrant::AUDIENCE)
+        ->identifiedBy('symmetric-grant-id')
         ->issuedAt(now()->subSecond()->toDateTimeImmutable())
         ->canOnlyBeUsedAfter(now()->subSecond()->toDateTimeImmutable())
         ->expiresAt(now()->addMinute()->toDateTimeImmutable())
+        ->withClaim('application_id', $application->public_id)
+        ->withClaim('credential_id', KeyMaterial::credentialId($context['key']['public']))
+        ->withClaim('session_id', $context['session_id'])
+        ->withClaim('origin', $context['origin'])
+        ->withClaim('protocol_version', Envelope::VERSION)
+        ->withClaim('max_event_time', now()->addSeconds(30)->getTimestamp())
+        ->withClaim('ceilings', [
+            'max_chunks' => $application->max_chunks_per_session,
+            'max_compressed_bytes' => $application->max_compressed_bytes_per_session,
+            'max_chunk_bytes' => $application->max_compressed_chunk_bytes,
+        ])
         ->getToken($configuration->signer(), $configuration->signingKey())
         ->toString();
 }
