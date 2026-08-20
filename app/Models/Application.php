@@ -22,6 +22,14 @@ use Illuminate\Support\Str;
     'excluded_paths',
     'sampling_percent',
     'ingest_enabled',
+    'max_new_sessions_per_day',
+    'max_concurrent_sessions',
+    'max_chunks_per_session',
+    'max_compressed_bytes_per_session',
+    'max_compressed_chunk_bytes',
+    'max_daily_chunks',
+    'max_daily_compressed_bytes',
+    'max_ingest_requests_per_minute',
 ])]
 class Application extends Model
 {
@@ -44,6 +52,14 @@ class Application extends Model
         return $this->hasMany(ApplicationCredential::class);
     }
 
+    /**
+     * @return HasMany<RecordingSession, $this>
+     */
+    public function recordingSessions(): HasMany
+    {
+        return $this->hasMany(RecordingSession::class);
+    }
+
     #[\Override]
     public function getRouteKeyName(): string
     {
@@ -64,6 +80,14 @@ class Application extends Model
             'excluded_paths' => 'array',
             'sampling_percent' => 'integer',
             'ingest_enabled' => 'boolean',
+            'max_new_sessions_per_day' => 'integer',
+            'max_concurrent_sessions' => 'integer',
+            'max_chunks_per_session' => 'integer',
+            'max_compressed_bytes_per_session' => 'integer',
+            'max_compressed_chunk_bytes' => 'integer',
+            'max_daily_chunks' => 'integer',
+            'max_daily_compressed_bytes' => 'integer',
+            'max_ingest_requests_per_minute' => 'integer',
         ];
     }
 }

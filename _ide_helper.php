@@ -19093,16 +19093,6 @@ namespace Illuminate\Support\Facades {
             return \Illuminate\Routing\Router::livewire($uri, $component);
         }
 
-        /**
-         * @see \ArtisanBuild\ReelClient\ReelClientServiceProvider::registerRoutePolicy()
-         * @return \Illuminate\Routing\RouteRegistrar
-         * @static
-         */
-        public static function hiddenFromReel()
-        {
-            return \Illuminate\Routing\Router::hiddenFromReel();
-        }
-
             }
     /**
      * @method static \Illuminate\Console\Scheduling\PendingEventAttributes withoutOverlapping(int $expiresAt = 1440, bool $releaseOnTerminationSignals = true)
@@ -24454,6 +24444,31 @@ namespace Illuminate\Support\Facades {
             }
     }
 
+namespace ArtisanBuild\ReelClient\Facades {
+    /**
+     */
+    class Reel {
+        /**
+         * @static
+         */
+        public static function sessionsUrlFor($model)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->sessionsUrlFor($model);
+        }
+
+        /**
+         * @static
+         */
+        public static function sessionsUrlForId($id)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->sessionsUrlForId($id);
+        }
+
+            }
+    }
+
 namespace Flux {
     /**
      * @see \Flux\FluxManager
@@ -25224,30 +25239,10 @@ namespace Illuminate\Routing {
             return \Illuminate\Routing\Router::livewire($uri, $component);
         }
 
-        /**
-         * @see \ArtisanBuild\ReelClient\ReelClientServiceProvider::registerRoutePolicy()
-         * @return \Illuminate\Routing\RouteRegistrar
-         * @static
-         */
-        public static function hiddenFromReel()
-        {
-            return \Illuminate\Routing\Router::hiddenFromReel();
-        }
-
             }
     /**
      */
     class Route {
-        /**
-         * @see \ArtisanBuild\ReelClient\ReelClientServiceProvider::registerRoutePolicy()
-         * @return \Illuminate\Routing\Route
-         * @static
-         */
-        public static function hiddenFromReel()
-        {
-            return \Illuminate\Routing\Route::hiddenFromReel();
-        }
-
         /**
          * @see \Livewire\Features\SupportLazyLoading\SupportLazyLoading::registerRouteMacro()
          * @param mixed $enabled
@@ -25266,41 +25261,6 @@ namespace Illuminate\Routing {
         public static function defer($enabled = true)
         {
             return \Illuminate\Routing\Route::defer($enabled);
-        }
-
-            }
-    /**
-     * @method \Illuminate\Routing\Route any(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route delete(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route get(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route options(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route patch(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route post(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\Route put(string $uri, \Closure|array|string|null $action = null)
-     * @method \Illuminate\Routing\RouteRegistrar as(string $value)
-     * @method \Illuminate\Routing\RouteRegistrar can(\UnitEnum|string  $ability, array|string $models = [])
-     * @method \Illuminate\Routing\RouteRegistrar controller(string $controller)
-     * @method \Illuminate\Routing\RouteRegistrar domain(\BackedEnum|string $value)
-     * @method \Illuminate\Routing\RouteRegistrar metadata(array $metadata)
-     * @method \Illuminate\Routing\RouteRegistrar middleware(array|string|null $middleware)
-     * @method \Illuminate\Routing\RouteRegistrar missing(\Closure $missing)
-     * @method \Illuminate\Routing\RouteRegistrar name(\BackedEnum|string $value)
-     * @method \Illuminate\Routing\RouteRegistrar namespace(string|null $value)
-     * @method \Illuminate\Routing\RouteRegistrar prefix(string $prefix)
-     * @method \Illuminate\Routing\RouteRegistrar scopeBindings()
-     * @method \Illuminate\Routing\RouteRegistrar where(array $where)
-     * @method \Illuminate\Routing\RouteRegistrar withoutMiddleware(array|string $middleware)
-     * @method \Illuminate\Routing\RouteRegistrar withoutScopedBindings()
-     */
-    class RouteRegistrar {
-        /**
-         * @see \ArtisanBuild\ReelClient\ReelClientServiceProvider::registerRoutePolicy()
-         * @return \Illuminate\Routing\RouteRegistrar
-         * @static
-         */
-        public static function hiddenFromReel()
-        {
-            return \Illuminate\Routing\RouteRegistrar::hiddenFromReel();
         }
 
             }
@@ -30584,6 +30544,7 @@ namespace  {
     class Validator extends \Illuminate\Support\Facades\Validator {}
     class View extends \Illuminate\Support\Facades\View {}
     class Vite extends \Illuminate\Support\Facades\Vite {}
+    class Reel extends \ArtisanBuild\ReelClient\Facades\Reel {}
     class Flux extends \Flux\Flux {}
     class Livewire extends \Livewire\Livewire {}
 }

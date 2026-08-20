@@ -6,6 +6,7 @@ use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\SessionGrant;
 
 return [
+    'host_mode' => env('REEL_HOST_MODE'),
     'url' => env('REEL_URL'),
     'application_id' => env('REEL_APPLICATION_ID'),
     'private_key' => env('REEL_PRIVATE_KEY'),

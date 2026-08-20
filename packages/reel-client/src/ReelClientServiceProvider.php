@@ -31,13 +31,15 @@ final class ReelClientServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->registerRoutePolicy();
-        $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
-        $this->loadViewsFrom(__DIR__.'/../resources/views', 'reel-client');
-        Blade::anonymousComponentPath(__DIR__.'/../resources/views/components', 'reel');
+        if ($this->hostModeEnabled()) {
+            $this->registerRoutePolicy();
+            $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
+            $this->loadViewsFrom(__DIR__.'/../resources/views', 'reel-client');
+            Blade::anonymousComponentPath(__DIR__.'/../resources/views/components', 'reel');
 
-        RateLimiter::for('reel-grants', fn (Request $request): Limit => Limit::perMinute(10)
-            ->by($request->session()->getId().'|'.$request->ip()));
+            RateLimiter::for('reel-grants', fn (Request $request): Limit => Limit::perMinute(10)
+                ->by($request->session()->getId().'|'.$request->ip()));
+        }
 
         if ($this->app->runningInConsole()) {
             $this->commands([InstallCommand::class]);
@@ -45,6 +47,18 @@ final class ReelClientServiceProvider extends ServiceProvider
                 __DIR__.'/../config/reel.php' => $this->app->configPath('reel.php'),
             ], 'reel-config');
         }
+    }
+
+    private function hostModeEnabled(): bool
+    {
+        $configured = config('reel.host_mode');
+
+        if (is_bool($configured)) {
+            return $configured;
+        }
+
+        return (string) config('reel.url') !== ''
+            && (string) config('reel.private_key') !== '';
     }
 
     private function registerRoutePolicy(): void
