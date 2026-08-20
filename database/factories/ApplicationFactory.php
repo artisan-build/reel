@@ -27,6 +27,9 @@ class ApplicationFactory extends Factory
             'max_chunks_per_session' => 360,
             'max_compressed_bytes_per_session' => 64 * 1024 * 1024,
             'max_compressed_chunk_bytes' => 256 * 1024,
+            'max_daily_chunks' => 100_000,
+            'max_daily_compressed_bytes' => 10 * 1024 * 1024 * 1024,
+            'max_ingest_requests_per_minute' => 600,
         ];
     }
 }

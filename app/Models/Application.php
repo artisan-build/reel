@@ -27,6 +27,9 @@ use Illuminate\Support\Str;
     'max_chunks_per_session',
     'max_compressed_bytes_per_session',
     'max_compressed_chunk_bytes',
+    'max_daily_chunks',
+    'max_daily_compressed_bytes',
+    'max_ingest_requests_per_minute',
 ])]
 class Application extends Model
 {
@@ -82,6 +85,9 @@ class Application extends Model
             'max_chunks_per_session' => 'integer',
             'max_compressed_bytes_per_session' => 'integer',
             'max_compressed_chunk_bytes' => 'integer',
+            'max_daily_chunks' => 'integer',
+            'max_daily_compressed_bytes' => 'integer',
+            'max_ingest_requests_per_minute' => 'integer',
         ];
     }
 }

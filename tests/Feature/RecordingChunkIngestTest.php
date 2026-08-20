@@ -7,11 +7,14 @@ use App\Enums\RecordingSessionStatus;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
+use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
+use App\Services\ChunkPrivacyValidator;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -216,6 +219,36 @@ function postIngestEnvelope(array $envelope, string $origin = 'https://monitored
         server: ['CONTENT_TYPE' => 'text/plain', 'HTTP_ORIGIN' => $origin],
         content: json_encode($envelope, JSON_THROW_ON_ERROR),
     );
+}
+
+/**
+ * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ */
+function insertConcurrentTestSession(array $context): int
+{
+    $application = $context['application'];
+
+    return DB::table('recording_sessions')->insertGetId([
+        'application_id' => $application->getKey(),
+        'application_credential_id' => $context['credential']->getKey(),
+        'session_id' => str_repeat('f', 64),
+        'grant_id_hash' => hash('sha256', 'concurrent-test-grant'),
+        'origin' => $context['origin'],
+        'status' => RecordingSessionStatus::Recording->value,
+        'protocol_version' => Envelope::VERSION,
+        'max_chunks' => $application->max_chunks_per_session,
+        'max_compressed_bytes' => $application->max_compressed_bytes_per_session,
+        'max_chunk_bytes' => $application->max_compressed_chunk_bytes,
+        'chunk_count' => 0,
+        'compressed_bytes' => 0,
+        'conflicting_retry_count' => 0,
+        'epoch_count' => 0,
+        'started_at' => now(),
+        'max_event_time' => now()->addMinutes(29),
+        'upload_cutoff_at' => now()->addMinutes(30),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
 }
 
 beforeEach(function (): void {
@@ -423,6 +456,9 @@ it('enforces daily new-session and concurrent-session application caps', functio
     $secondContext = $context;
     $secondContext['session_id'] = bin2hex(random_bytes(32));
     $secondEnvelope = ingestEnvelope($secondContext, overrides: ['grant' => ingestGrant($secondContext, ['grant_id' => 'second-grant'])]);
+    $invalidCompressed = 'not-a-gzip-stream';
+    $secondEnvelope['payload'] = base64_encode($invalidCompressed);
+    $secondEnvelope['checksum'] = hash('sha256', $invalidCompressed);
 
     postIngestEnvelope($secondEnvelope)
         ->assertTooManyRequests()
@@ -648,4 +684,304 @@ it('leaves the monitored application response unchanged when ingest fails', func
     postIngestEnvelope($envelope)->assertUnauthorized();
 
     $this->get('/ingest-isolation-fixture')->assertOk()->assertContent($before);
+});
+
+it('rejects unknown event-level fields instead of scanning only event data', function (string $field): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $events[0][$field] = 'SECRET';
+
+    postIngestEnvelope(ingestEnvelope($context, $events))
+        ->assertUnprocessable()
+        ->assertJsonPath('accepted', false);
+
+    expect(RecordingChunk::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+})->with(['requestBody', 'cookies', 'wire:snapshot', 'unknown']);
+
+it('fails closed on malformed node discriminators and canonicalized names', function (Closure $mutate): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $mutate($events);
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertUnprocessable();
+
+    expect(RecordingChunk::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+})->with([
+    'string node discriminator' => function (array &$events): void {
+        $events[0]['data']['node']['type'] = '2';
+    },
+    'string node discriminator with hydration data' => function (array &$events): void {
+        $events[0]['data']['node']['type'] = '2';
+        $events[0]['data']['node']['attributes']['wire:snapshot'] = 'SECRET';
+    },
+    'padded input tag' => function (array &$events): void {
+        $events[0]['data']['node']['tagName'] = 'input ';
+        $events[0]['data']['node']['attributes']['value'] = 'SECRET';
+    },
+    'entity encoded hydration attribute' => function (array &$events): void {
+        $events[0]['data']['node']['attributes']['wire&#58;snapshot'] = 'SECRET';
+    },
+]);
+
+it('rejects canonicalized CSS network references', function (string $style): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $events[0]['data']['node']['attributes']['style'] = $style;
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertUnprocessable();
+
+    expect(RecordingChunk::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+})->with([
+    'escaped url function' => 'background:\75\72\6c(https://private.example/a.png)',
+    'comment-separated import' => '@import/**/"https://private.example/a.css"',
+]);
+
+it('rejects gzip data with unvalidated trailing bytes', function (): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+    $compressed = gzencode(json_encode($events, JSON_THROW_ON_ERROR));
+
+    if ($compressed === false) {
+        throw new RuntimeException('Unable to build the gzip framing fixture.');
+    }
+
+    $compressed .= 'RAW-DOM-OR-TOKEN';
+    $envelope = ingestEnvelope($context, $events, [
+        'payload' => base64_encode($compressed),
+        'checksum' => hash('sha256', $compressed),
+    ]);
+
+    postIngestEnvelope($envelope)
+        ->assertUnprocessable()
+        ->assertJsonPath('reason', 'invalid_gzip_framing');
+
+    expect(RecordingChunk::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+});
+
+it('fails an epoch after privacy rejection and refuses its later chunks', function (): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 0, 'grant' => $grant]))->assertAccepted();
+
+    $unsafe = safeIngestEvents();
+    $unsafe[0]['data']['node']['attributes']['wire:snapshot'] = 'SECRET';
+    postIngestEnvelope(ingestEnvelope($context, $unsafe, ['sequence' => 1, 'grant' => $grant]))
+        ->assertUnprocessable();
+
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 2, 'grant' => $grant]))
+        ->assertConflict()
+        ->assertJsonPath('reason', 'epoch_failed');
+
+    $epoch = RecordingEpoch::query()->sole();
+    expect(RecordingChunk::query()->pluck('sequence')->all())->toBe([0])
+        ->and($epoch->status->value)->toBe('failed')
+        ->and($epoch->failure_code)->toStartWith('privacy_')
+        ->and($epoch->transitions()->orderBy('id')->pluck('new_state')->all())->toBe(['active', 'failed']);
+});
+
+it('validates every decoded event timestamp against signed and declared bounds', function (): void {
+    $context = ingestContext();
+    $declaredTime = now()->getTimestampMs();
+    $events = safeIngestEvents(now()->addYear()->getTimestampMs());
+
+    postIngestEnvelope(ingestEnvelope($context, $events, [
+        'event_started_at' => $declaredTime,
+        'event_ended_at' => $declaredTime,
+    ]))->assertUnprocessable()->assertJsonPath('reason', 'event_time_outside_grant');
+
+    expect(RecordingChunk::query()->count())->toBe(0);
+});
+
+it('requires declared envelope bounds to equal decoded event bounds', function (): void {
+    $context = ingestContext();
+    $events = safeIngestEvents();
+
+    postIngestEnvelope(ingestEnvelope($context, $events, [
+        'event_started_at' => $events[0]['timestamp'] - 1,
+    ]))->assertUnprocessable()->assertJsonPath('reason', 'event_bounds_mismatch');
+
+    expect(RecordingChunk::query()->count())->toBe(0);
+});
+
+it('enforces application-wide daily chunk and byte ceilings', function (string $limit): void {
+    $context = ingestContext();
+    $grant = ingestGrant($context);
+    $first = ingestEnvelope($context, overrides: ['grant' => $grant]);
+    $firstBytes = strlen(base64_decode((string) $first['payload'], true));
+
+    $context['application']->update([
+        'max_daily_chunks' => $limit === 'chunks' ? 1 : 100,
+        'max_daily_compressed_bytes' => $limit === 'bytes' ? $firstBytes : 1_000_000,
+    ]);
+
+    postIngestEnvelope($first)->assertAccepted();
+    $second = ingestEnvelope($context, overrides: ['sequence' => 1, 'grant' => $grant]);
+    $invalidCompressed = 'not-a-gzip-stream';
+    $second['payload'] = base64_encode($invalidCompressed);
+    $second['checksum'] = hash('sha256', $invalidCompressed);
+
+    postIngestEnvelope($second)
+        ->assertTooManyRequests()
+        ->assertJsonPath('reason', $limit === 'chunks'
+            ? 'application_daily_chunk_limit'
+            : 'application_daily_byte_limit');
+
+    expect(RecordingChunk::query()->count())->toBe(1);
+})->with(['chunks', 'bytes']);
+
+it('uses a database-backed ingest request throttle before decompression', function (): void {
+    $context = ingestContext(['max_ingest_requests_per_minute' => 1]);
+    postIngestEnvelope(ingestEnvelope($context))->assertAccepted();
+    $invalidCompressed = 'not-a-gzip-stream';
+    $secondContext = $context;
+    $secondContext['session_id'] = bin2hex(random_bytes(32));
+    $envelope = ingestEnvelope($secondContext, overrides: [
+        'grant' => ingestGrant($secondContext, ['grant_id' => 'throttled-grant']),
+        'payload' => base64_encode($invalidCompressed),
+        'checksum' => hash('sha256', $invalidCompressed),
+    ]);
+
+    postIngestEnvelope($envelope)
+        ->assertTooManyRequests()
+        ->assertJsonPath('reason', 'ingest_request_limit');
+});
+
+it('rechecks application aggregate chunk capacity under the write lock', function (): void {
+    $context = ingestContext(['max_daily_chunks' => 1]);
+
+    $this->app->instance(ChunkPrivacyValidator::class, new class($context) extends ChunkPrivacyValidator
+    {
+        public function __construct(private readonly array $context) {}
+
+        #[Override]
+        public function validate(mixed $events): void
+        {
+            parent::validate($events);
+            $sessionId = insertConcurrentTestSession($this->context);
+            DB::table('recording_chunks')->insert([
+                'application_id' => $this->context['application']->getKey(),
+                'recording_session_id' => $sessionId,
+                'epoch_id' => 'concurrent-epoch',
+                'sequence' => 0,
+                'checksum' => str_repeat('a', 64),
+                'compressed_bytes' => 100,
+                'decompressed_bytes' => 200,
+                'event_started_at' => now()->getTimestampMs(),
+                'event_ended_at' => now()->getTimestampMs(),
+                'object_key' => 'concurrent-test-object',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    });
+
+    postIngestEnvelope(ingestEnvelope($context))
+        ->assertTooManyRequests()
+        ->assertJsonPath('reason', 'application_daily_chunk_limit');
+
+    expect(Storage::disk('local')->allFiles())->toBeEmpty();
+});
+
+it('rechecks concurrent session capacity under the write lock', function (): void {
+    $context = ingestContext(['max_concurrent_sessions' => 1]);
+
+    $this->app->instance(ChunkPrivacyValidator::class, new class($context) extends ChunkPrivacyValidator
+    {
+        public function __construct(private readonly array $context) {}
+
+        #[Override]
+        public function validate(mixed $events): void
+        {
+            parent::validate($events);
+            insertConcurrentTestSession($this->context);
+        }
+    });
+
+    postIngestEnvelope(ingestEnvelope($context))
+        ->assertTooManyRequests()
+        ->assertJsonPath('reason', 'concurrent_session_limit');
+
+    expect(RecordingSession::query()->count())->toBe(1)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+});
+
+it('enforces legal session transitions in the model and database', function (): void {
+    $context = ingestContext();
+    postIngestEnvelope(ingestEnvelope($context))->assertAccepted();
+    $session = RecordingSession::query()->sole();
+
+    expect($session->isFillable('status'))->toBeFalse()
+        ->and(fn () => $session->transitionTo(RecordingSessionStatus::Deleted, 'illegal'))
+        ->toThrow(DomainException::class);
+
+    $session->transitionTo(RecordingSessionStatus::Failed, 'test_failure');
+    $session->transitionTo(RecordingSessionStatus::Deleting, 'test_deletion');
+
+    expect(fn () => $session->transitionTo(RecordingSessionStatus::Ready, 'illegal_revival'))
+        ->toThrow(DomainException::class)
+        ->and(fn () => DB::transaction(fn () => DB::table('recording_sessions')
+            ->where('id', $session->getKey())
+            ->update(['status' => RecordingSessionStatus::Ready->value])))
+        ->toThrow(QueryException::class)
+        ->and($session->transitions()->orderBy('id')->pluck('new_state')->all())
+        ->toBe(['recording', 'failed', 'deleting']);
+});
+
+it('accepts a legal session transition and records it once', function (): void {
+    $context = ingestContext();
+    postIngestEnvelope(ingestEnvelope($context))->assertAccepted();
+    $session = RecordingSession::query()->sole();
+
+    $session->transitionTo(RecordingSessionStatus::Closing, 'explicit_close', 2);
+
+    expect($session->status)->toBe(RecordingSessionStatus::Closing)
+        ->and($session->transitions()->latest('id')->first()->only([
+            'previous_state', 'new_state', 'reason', 'attempt',
+        ]))->toBe([
+            'previous_state' => 'recording',
+            'new_state' => 'closing',
+            'reason' => 'explicit_close',
+            'attempt' => 2,
+        ]);
+});
+
+it('rechecks and locks credential activity after decoding before persistence', function (): void {
+    $context = ingestContext();
+    $credential = $context['credential'];
+    $credentialQueries = [];
+
+    $this->app->instance(ChunkPrivacyValidator::class, new class($credential) extends ChunkPrivacyValidator
+    {
+        public function __construct(private readonly ApplicationCredential $credential) {}
+
+        #[Override]
+        public function validate(mixed $events): void
+        {
+            parent::validate($events);
+            $this->credential->update([
+                'status' => CredentialStatus::Revoked,
+                'revoked_at' => now(),
+            ]);
+        }
+    });
+
+    DB::listen(function (QueryExecuted $query) use (&$credentialQueries): void {
+        $sql = strtolower($query->sql);
+
+        if (str_contains($sql, 'application_credentials')) {
+            $credentialQueries[] = $sql;
+        }
+    });
+
+    postIngestEnvelope(ingestEnvelope($context))
+        ->assertUnauthorized()
+        ->assertJsonPath('reason', 'inactive_credential');
+
+    expect(collect($credentialQueries)->contains(fn (string $sql): bool => str_contains($sql, 'for update')))->toBeTrue()
+        ->and(RecordingSession::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
 });

@@ -3,11 +3,13 @@
 namespace App\Services;
 
 use App\Enums\CredentialStatus;
+use App\Enums\RecordingEpochStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Exceptions\IngestRejected;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
+use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
@@ -80,6 +82,8 @@ class ChunkIngestor
             $this->reject('invalid_grant_claims', 401);
         }
 
+        $this->recordIngestAttempt($application);
+
         $compressed = base64_decode((string) $envelope['payload'], true);
 
         if ($compressed === false || strlen($compressed) > $ceilings['max_chunk_bytes']) {
@@ -90,7 +94,8 @@ class ChunkIngestor
             $this->reject('checksum_mismatch', 422);
         }
 
-        $decompressed = $this->decompress($compressed);
+        $this->preflightApplicationLimits($application, $envelope, strlen($compressed));
+        [$decompressed, $validatedCompressed] = $this->decompress($compressed);
 
         try {
             $events = json_decode($decompressed, true, 64, JSON_THROW_ON_ERROR);
@@ -98,18 +103,32 @@ class ChunkIngestor
             $this->reject('invalid_event_json', 422);
         }
 
-        $this->privacyValidator->validate($events);
+        try {
+            $this->privacyValidator->validate($events);
+        } catch (IngestRejected $rejection) {
+            $this->failEpoch(
+                $application,
+                $credential,
+                $envelope,
+                $origin,
+                $grantId,
+                $ceilings,
+                $issuedAt,
+                $expiresAt,
+                $maxEventTime,
+                $rejection->reason,
+            );
 
-        if ($envelope['event_started_at'] < $issuedAt->getTimestamp() * 1000
-            || $envelope['event_ended_at'] > $maxEventTime * 1000) {
-            $this->reject('event_time_outside_grant', 422);
+            throw $rejection;
         }
+
+        $this->assertEventTimes($events, $envelope, $issuedAt, $maxEventTime);
 
         $result = $this->persist(
             $application,
             $credential,
             $envelope,
-            $compressed,
+            $validatedCompressed,
             strlen($decompressed),
             $origin,
             $grantId,
@@ -155,7 +174,8 @@ class ChunkIngestor
         }
     }
 
-    private function decompress(string $compressed): string
+    /** @return array{string, string} */
+    private function decompress(string $compressed): array
     {
         $limit = (int) config('reel_ingest.maximum_decompressed_chunk_bytes');
         $context = @inflate_init(ZLIB_ENCODING_GZIP);
@@ -183,7 +203,139 @@ class ChunkIngestor
             $decompressed .= $output;
         }
 
-        return $decompressed;
+        $consumedBytes = inflate_get_read_len($context);
+
+        if (inflate_get_status($context) !== ZLIB_STREAM_END || $consumedBytes !== $compressedBytes) {
+            $this->reject('invalid_gzip_framing', 422);
+        }
+
+        return [$decompressed, substr($compressed, 0, $consumedBytes)];
+    }
+
+    /**
+     * @param  array<string, mixed>  $envelope
+     */
+    private function assertEventTimes(
+        mixed $events,
+        array $envelope,
+        DateTimeInterface $issuedAt,
+        int $maxEventTime,
+    ): void {
+        if (! is_array($events) || $events === []) {
+            $this->reject('invalid_event_batch', 422);
+        }
+
+        $timestamps = [];
+
+        foreach ($events as $event) {
+            $timestamp = is_array($event) ? ($event['timestamp'] ?? null) : null;
+
+            if (! is_int($timestamp)
+                || $timestamp < $issuedAt->getTimestamp() * 1000
+                || $timestamp > $maxEventTime * 1000
+                || $timestamp < $envelope['event_started_at']
+                || $timestamp > $envelope['event_ended_at']) {
+                $this->reject('event_time_outside_grant', 422);
+            }
+
+            $timestamps[] = $timestamp;
+        }
+
+        if (min($timestamps) !== $envelope['event_started_at']
+            || max($timestamps) !== $envelope['event_ended_at']) {
+            $this->reject('event_bounds_mismatch', 422);
+        }
+    }
+
+    private function recordIngestAttempt(Application $application): void
+    {
+        DB::transaction(function () use ($application): void {
+            $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
+
+            if (! $lockedApplication instanceof Application || ! $lockedApplication->ingest_enabled) {
+                $this->reject('application_disabled', 403);
+            }
+
+            $window = now()->startOfMinute();
+            $counter = DB::table('ingest_rate_counters')
+                ->where('application_id', $lockedApplication->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if ($counter === null) {
+                DB::table('ingest_rate_counters')->insert([
+                    'application_id' => $lockedApplication->getKey(),
+                    'window_started_at' => $window,
+                    'request_count' => 1,
+                ]);
+
+                return;
+            }
+
+            if ((string) $counter->window_started_at !== $window->toDateTimeString()) {
+                DB::table('ingest_rate_counters')
+                    ->where('id', $counter->id)
+                    ->update([
+                        'window_started_at' => $window,
+                        'request_count' => 1,
+                    ]);
+
+                return;
+            }
+
+            if ((int) $counter->request_count >= $lockedApplication->max_ingest_requests_per_minute) {
+                $this->reject('ingest_request_limit', 429);
+            }
+
+            DB::table('ingest_rate_counters')
+                ->where('id', $counter->id)
+                ->increment('request_count');
+        }, 3);
+    }
+
+    /** @param array<string, mixed> $envelope */
+    private function preflightApplicationLimits(Application $application, array $envelope, int $compressedBytes): void
+    {
+        $session = RecordingSession::query()
+            ->where('application_id', $application->getKey())
+            ->where('session_id', $envelope['session_id'])
+            ->first();
+
+        if (! $session instanceof RecordingSession) {
+            $this->assertNewSessionAllowed($application);
+        }
+
+        $chunkExists = RecordingChunk::query()
+            ->where('application_id', $application->getKey())
+            ->where('epoch_id', $envelope['epoch_id'])
+            ->where('sequence', $envelope['sequence'])
+            ->when(
+                $session instanceof RecordingSession,
+                fn ($query) => $query->where('recording_session_id', $session->getKey()),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
+            ->exists();
+
+        if (! $chunkExists) {
+            $this->assertApplicationChunkCapacity($application, $compressedBytes);
+        }
+    }
+
+    private function assertApplicationChunkCapacity(Application $application, int $compressedBytes): void
+    {
+        $daily = RecordingChunk::query()
+            ->where('application_id', $application->getKey())
+            ->where('created_at', '>=', today());
+        $chunkCount = (clone $daily)->count();
+        $byteCount = (int) (clone $daily)->sum('compressed_bytes');
+
+        if ($chunkCount + 1 > $application->max_daily_chunks) {
+            $this->reject('application_daily_chunk_limit', 429);
+        }
+
+        if ($byteCount + $compressedBytes > $application->max_daily_compressed_bytes) {
+            $this->reject('application_daily_byte_limit', 429);
+        }
     }
 
     /**
@@ -269,6 +421,18 @@ class ChunkIngestor
                 $this->reject('application_disabled', 403);
             }
 
+            $lockedCredential = ApplicationCredential::query()
+                ->where('application_id', $lockedApplication->getKey())
+                ->lockForUpdate()
+                ->find($credential->getKey());
+
+            if (! $lockedCredential instanceof ApplicationCredential
+                || ! $lockedCredential->isActive()
+                || $lockedCredential->algorithm !== ApplicationCredential::ALGORITHM
+                || $lockedCredential->public_key !== $credential->public_key) {
+                $this->reject('inactive_credential', 401);
+            }
+
             $session = RecordingSession::query()
                 ->where('application_id', $lockedApplication->getKey())
                 ->where('session_id', $envelope['session_id'])
@@ -277,24 +441,19 @@ class ChunkIngestor
 
             if (! $session instanceof RecordingSession) {
                 $this->assertNewSessionAllowed($lockedApplication);
-                $session = RecordingSession::query()->create([
-                    'application_id' => $lockedApplication->getKey(),
-                    'application_credential_id' => $credential->getKey(),
-                    'session_id' => $envelope['session_id'],
-                    'grant_id_hash' => hash('sha256', $grantId),
-                    'origin' => $origin,
-                    'status' => RecordingSessionStatus::Recording,
-                    'protocol_version' => Envelope::VERSION,
-                    'max_chunks' => $ceilings['max_chunks'],
-                    'max_compressed_bytes' => $ceilings['max_compressed_bytes'],
-                    'max_chunk_bytes' => $ceilings['max_chunk_bytes'],
-                    'started_at' => $issuedAt,
-                    'max_event_time' => date_create_immutable('@'.$maxEventTime),
-                    'upload_cutoff_at' => $expiresAt,
-                ]);
-                $this->recordTransition($session, null, RecordingSessionStatus::Recording, 'grant_accepted');
+                $session = $this->createSession(
+                    $lockedApplication,
+                    $lockedCredential,
+                    $envelope,
+                    $origin,
+                    $grantId,
+                    $ceilings,
+                    $issuedAt,
+                    $expiresAt,
+                    $maxEventTime,
+                );
             } else {
-                $this->assertSessionBinding($session, $credential, $origin, $grantId, $ceilings, $maxEventTime, $expiresAt);
+                $this->assertSessionBinding($session, $lockedCredential, $origin, $grantId, $ceilings, $maxEventTime, $expiresAt);
             }
 
             if (now()->greaterThanOrEqualTo($session->upload_cutoff_at)) {
@@ -303,11 +462,17 @@ class ChunkIngestor
 
             if ($session->status === RecordingSessionStatus::Recording
                 && now()->greaterThanOrEqualTo($session->max_event_time)) {
-                $this->transitionToClosing($session);
+                $session->transitionTo(RecordingSessionStatus::Closing, 'maximum_event_time_reached');
             }
 
             if (! in_array($session->status, [RecordingSessionStatus::Recording, RecordingSessionStatus::Closing], true)) {
                 $this->reject('session_not_accepting_uploads', 409);
+            }
+
+            $epoch = $this->findOrCreateEpoch($session, $envelope['epoch_id']);
+
+            if ($epoch->status === RecordingEpochStatus::Failed) {
+                $this->reject('epoch_failed', 409);
             }
 
             $existing = $session->chunks()
@@ -335,6 +500,8 @@ class ChunkIngestor
                 $this->reject('session_byte_limit', 413);
             }
 
+            $this->assertApplicationChunkCapacity($lockedApplication, $compressedBytes);
+
             $maxSequence = $session->chunks()
                 ->where('epoch_id', $envelope['epoch_id'])
                 ->max('sequence');
@@ -345,7 +512,6 @@ class ChunkIngestor
                 $this->reject('reorder_distance_exceeded', 409);
             }
 
-            $isNewEpoch = ! $session->chunks()->where('epoch_id', $envelope['epoch_id'])->exists();
             $objectKey = $this->objectKey($lockedApplication, $session, $envelope);
             $disk = Storage::disk((string) config('filesystems.default'));
 
@@ -373,7 +539,6 @@ class ChunkIngestor
             $session->incrementEach([
                 'chunk_count' => 1,
                 'compressed_bytes' => $compressedBytes,
-                'epoch_count' => $isNewEpoch ? 1 : 0,
             ]);
 
             return new ChunkIngestResult(false, $origin);
@@ -402,6 +567,140 @@ class ChunkIngestor
         }
     }
 
+    /**
+     * @param  array<string, mixed>  $envelope
+     * @param  array<string, int>  $ceilings
+     */
+    private function createSession(
+        Application $application,
+        ApplicationCredential $credential,
+        array $envelope,
+        string $origin,
+        string $grantId,
+        array $ceilings,
+        DateTimeInterface $issuedAt,
+        DateTimeInterface $expiresAt,
+        int $maxEventTime,
+    ): RecordingSession {
+        $session = new RecordingSession;
+        $session->fill([
+            'application_id' => $application->getKey(),
+            'application_credential_id' => $credential->getKey(),
+            'session_id' => $envelope['session_id'],
+            'grant_id_hash' => hash('sha256', $grantId),
+            'origin' => $origin,
+            'protocol_version' => Envelope::VERSION,
+            'max_chunks' => $ceilings['max_chunks'],
+            'max_compressed_bytes' => $ceilings['max_compressed_bytes'],
+            'max_chunk_bytes' => $ceilings['max_chunk_bytes'],
+            'started_at' => $issuedAt,
+            'max_event_time' => date_create_immutable('@'.$maxEventTime),
+            'upload_cutoff_at' => $expiresAt,
+        ]);
+        $session->status = RecordingSessionStatus::Recording;
+        $session->save();
+        $session->recordInitialTransition('grant_accepted');
+
+        return $session;
+    }
+
+    private function findOrCreateEpoch(RecordingSession $session, string $epochId): RecordingEpoch
+    {
+        $epoch = $session->epochs()->where('epoch_id', $epochId)->lockForUpdate()->first();
+
+        if ($epoch instanceof RecordingEpoch) {
+            return $epoch;
+        }
+
+        $epoch = new RecordingEpoch;
+        $epoch->fill([
+            'recording_session_id' => $session->getKey(),
+            'epoch_id' => $epochId,
+        ]);
+        $epoch->status = RecordingEpochStatus::Active;
+        $epoch->save();
+        $session->increment('epoch_count');
+        $epoch->transitions()->create([
+            'previous_state' => null,
+            'new_state' => RecordingEpochStatus::Active->value,
+            'reason' => 'first_chunk_received',
+            'attempt' => 1,
+            'transitioned_at' => now(),
+        ]);
+
+        return $epoch;
+    }
+
+    /**
+     * @param  array<string, mixed>  $envelope
+     * @param  array<string, int>  $ceilings
+     */
+    private function failEpoch(
+        Application $application,
+        ApplicationCredential $credential,
+        array $envelope,
+        string $origin,
+        string $grantId,
+        array $ceilings,
+        DateTimeInterface $issuedAt,
+        DateTimeInterface $expiresAt,
+        int $maxEventTime,
+        string $reason,
+    ): void {
+        DB::transaction(function () use (
+            $application,
+            $credential,
+            $envelope,
+            $origin,
+            $grantId,
+            $ceilings,
+            $issuedAt,
+            $expiresAt,
+            $maxEventTime,
+            $reason,
+        ): void {
+            $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
+            $lockedCredential = ApplicationCredential::query()
+                ->where('application_id', $application->getKey())
+                ->lockForUpdate()
+                ->find($credential->getKey());
+
+            if (! $lockedApplication instanceof Application
+                || ! $lockedApplication->ingest_enabled
+                || ! $lockedCredential instanceof ApplicationCredential
+                || ! $lockedCredential->isActive()) {
+                $this->reject('inactive_ingest_authority', 401);
+            }
+
+            $session = RecordingSession::query()
+                ->where('application_id', $lockedApplication->getKey())
+                ->where('session_id', $envelope['session_id'])
+                ->lockForUpdate()
+                ->first();
+
+            if (! $session instanceof RecordingSession) {
+                $this->assertNewSessionAllowed($lockedApplication);
+                $session = $this->createSession(
+                    $lockedApplication,
+                    $lockedCredential,
+                    $envelope,
+                    $origin,
+                    $grantId,
+                    $ceilings,
+                    $issuedAt,
+                    $expiresAt,
+                    $maxEventTime,
+                );
+            }
+
+            $epoch = $this->findOrCreateEpoch($session, $envelope['epoch_id']);
+
+            if ($epoch->status === RecordingEpochStatus::Active) {
+                $epoch->fail('privacy_'.$reason);
+            }
+        }, 3);
+    }
+
     /** @param array<string, int> $ceilings */
     private function assertSessionBinding(
         RecordingSession $session,
@@ -422,31 +721,6 @@ class ChunkIngestor
             || $session->upload_cutoff_at->getTimestamp() > $expiresAt->getTimestamp()) {
             $this->reject('session_grant_conflict', 409);
         }
-    }
-
-    private function transitionToClosing(RecordingSession $session): void
-    {
-        $previous = $session->status;
-        $session->update([
-            'status' => RecordingSessionStatus::Closing,
-            'closing_at' => now(),
-        ]);
-        $this->recordTransition($session, $previous, RecordingSessionStatus::Closing, 'maximum_event_time_reached');
-    }
-
-    private function recordTransition(
-        RecordingSession $session,
-        ?RecordingSessionStatus $previous,
-        RecordingSessionStatus $next,
-        string $reason,
-    ): void {
-        $session->transitions()->create([
-            'previous_state' => $previous?->value,
-            'new_state' => $next->value,
-            'reason' => $reason,
-            'attempt' => 1,
-            'transitioned_at' => now(),
-        ]);
     }
 
     /** @param array<string, mixed> $envelope */
