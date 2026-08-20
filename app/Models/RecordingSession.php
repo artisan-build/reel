@@ -31,7 +31,16 @@ use Illuminate\Support\Facades\DB;
     'max_event_time',
     'upload_cutoff_at',
     'closing_at',
+    'closing_cutoff_at',
+    'ended_at',
+    'maximum_expires_at',
+    'status_changed_at',
     'failure_code',
+    'is_complete',
+    'incomplete_reasons',
+    'gap_count',
+    'max_reorder_distance',
+    'concurrent_epoch_count',
 ])]
 class RecordingSession extends Model
 {
@@ -83,9 +92,9 @@ class RecordingSession extends Model
         DB::transaction(function () use ($next, $reason, $attempt): void {
             $locked = self::query()->lockForUpdate()->findOrFail($this->getKey());
             $allowed = match ($locked->status) {
-                RecordingSessionStatus::Recording => [RecordingSessionStatus::Closing, RecordingSessionStatus::Failed],
-                RecordingSessionStatus::Closing => [RecordingSessionStatus::Compacting, RecordingSessionStatus::Failed],
-                RecordingSessionStatus::Compacting => [RecordingSessionStatus::Ready, RecordingSessionStatus::Failed],
+                RecordingSessionStatus::Recording => [RecordingSessionStatus::Closing, RecordingSessionStatus::Failed, RecordingSessionStatus::Deleting],
+                RecordingSessionStatus::Closing => [RecordingSessionStatus::Compacting, RecordingSessionStatus::Failed, RecordingSessionStatus::Deleting],
+                RecordingSessionStatus::Compacting => [RecordingSessionStatus::Ready, RecordingSessionStatus::Failed, RecordingSessionStatus::Deleting],
                 RecordingSessionStatus::Ready, RecordingSessionStatus::Failed => [RecordingSessionStatus::Deleting],
                 RecordingSessionStatus::Deleting => [RecordingSessionStatus::Deleted],
                 RecordingSessionStatus::Deleted => [],
@@ -100,7 +109,13 @@ class RecordingSession extends Model
 
             if ($next === RecordingSessionStatus::Closing) {
                 $attributes['closing_at'] = now();
+                $attributes['closing_cutoff_at'] = min(
+                    $locked->upload_cutoff_at,
+                    now()->addSeconds((int) config('reel_ingest.late_arrival_window_seconds')),
+                );
             }
+
+            $attributes['status_changed_at'] = now();
 
             $locked->forceFill($attributes)->save();
             $locked->recordTransition($previous, $next, $reason, $attempt);
@@ -133,6 +148,14 @@ class RecordingSession extends Model
             'max_event_time' => 'immutable_datetime',
             'upload_cutoff_at' => 'immutable_datetime',
             'closing_at' => 'immutable_datetime',
+            'closing_cutoff_at' => 'immutable_datetime',
+            'ended_at' => 'immutable_datetime',
+            'maximum_expires_at' => 'immutable_datetime',
+            'status_changed_at' => 'immutable_datetime',
+            'is_complete' => 'boolean',
+            'incomplete_reasons' => 'array',
+            'manifest' => 'array',
+            'compacted_at' => 'immutable_datetime',
         ];
     }
 }

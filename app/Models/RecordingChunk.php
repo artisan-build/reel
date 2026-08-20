@@ -28,4 +28,15 @@ class RecordingChunk extends Model
     {
         return $this->belongsTo(RecordingSession::class);
     }
+
+    /** @return array<string, string> */
+    #[\Override]
+    protected function casts(): array
+    {
+        return [
+            'event_started_at' => 'integer',
+            'event_ended_at' => 'integer',
+            'purged_at' => 'immutable_datetime',
+        ];
+    }
 }

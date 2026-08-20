@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * @mixin IdeHelperRecordingEpoch
  */
-#[Fillable(['recording_session_id', 'epoch_id', 'failure_code'])]
+#[Fillable(['recording_session_id', 'epoch_id', 'failure_code', 'terminal_sequence'])]
 class RecordingEpoch extends Model
 {
     /** @return BelongsTo<RecordingSession, $this> */

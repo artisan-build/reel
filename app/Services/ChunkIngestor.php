@@ -15,6 +15,7 @@ use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrantContext;
 use ArtisanBuild\ReelClient\SessionGrantVerifier;
+use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +46,7 @@ class ChunkIngestor
     public function __construct(
         private readonly SessionGrantVerifier $grantVerifier,
         private readonly ChunkPrivacyValidator $privacyValidator,
+        private readonly OperationalCounters $operationalCounters,
     ) {}
 
     /** @param array<string, mixed> $envelope */
@@ -124,19 +126,31 @@ class ChunkIngestor
 
         $this->assertEventTimes($events, $envelope, $issuedAt, $maxEventTime);
 
-        $result = $this->persist(
-            $application,
-            $credential,
-            $envelope,
-            $validatedCompressed,
-            strlen($decompressed),
-            $origin,
-            $grantId,
-            $ceilings,
-            $issuedAt,
-            $expiresAt,
-            $maxEventTime,
-        );
+        try {
+            $result = $this->persist(
+                $application,
+                $credential,
+                $envelope,
+                $validatedCompressed,
+                strlen($decompressed),
+                $origin,
+                $grantId,
+                $ceilings,
+                $issuedAt,
+                $expiresAt,
+                $maxEventTime,
+            );
+        } catch (IngestRejected $rejection) {
+            if (in_array($rejection->reason, [
+                'upload_cutoff_elapsed',
+                'session_not_accepting_uploads',
+                'closing_not_gap_fill',
+            ], true)) {
+                $this->operationalCounters->increment('late_upload_rejections');
+            }
+
+            throw $rejection;
+        }
 
         if ($result->conflict) {
             $this->reject('conflicting_chunk', 409);
@@ -456,10 +470,7 @@ class ChunkIngestor
                 $this->assertSessionBinding($session, $lockedCredential, $origin, $grantId, $ceilings, $maxEventTime, $expiresAt);
             }
 
-            if (now()->greaterThanOrEqualTo($session->upload_cutoff_at)) {
-                $this->reject('upload_cutoff_elapsed', 409);
-            }
-
+            $wasRecording = $session->status === RecordingSessionStatus::Recording;
             if ($session->status === RecordingSessionStatus::Recording
                 && now()->greaterThanOrEqualTo($session->max_event_time)) {
                 $session->transitionTo(RecordingSessionStatus::Closing, 'maximum_event_time_reached');
@@ -469,7 +480,26 @@ class ChunkIngestor
                 $this->reject('session_not_accepting_uploads', 409);
             }
 
-            $epoch = $this->findOrCreateEpoch($session, $envelope['epoch_id']);
+            $cutoff = $session->status === RecordingSessionStatus::Closing
+                ? CarbonImmutable::parse($session->closing_cutoff_at)->min($session->upload_cutoff_at)
+                : $session->upload_cutoff_at;
+
+            if ($cutoff === null || now()->greaterThanOrEqualTo($cutoff)) {
+                $this->reject('upload_cutoff_elapsed', 409);
+            }
+
+            $epoch = $session->epochs()
+                ->where('epoch_id', $envelope['epoch_id'])
+                ->lockForUpdate()
+                ->first();
+
+            if (! $epoch instanceof RecordingEpoch) {
+                if ($session->status === RecordingSessionStatus::Closing && ! $wasRecording) {
+                    $this->reject('closing_not_gap_fill', 409);
+                }
+
+                $epoch = $this->findOrCreateEpoch($session, $envelope['epoch_id']);
+            }
 
             if ($epoch->status === RecordingEpochStatus::Failed) {
                 $this->reject('epoch_failed', 409);
@@ -490,6 +520,16 @@ class ChunkIngestor
                 return new ChunkIngestResult(false, $origin, true);
             }
 
+            $maxSequence = $session->chunks()
+                ->where('epoch_id', $envelope['epoch_id'])
+                ->max('sequence');
+
+            if ($session->status === RecordingSessionStatus::Closing
+                && ! $wasRecording
+                && ($maxSequence === null || $envelope['sequence'] > (int) $maxSequence)) {
+                $this->reject('closing_not_gap_fill', 409);
+            }
+
             $compressedBytes = strlen($compressed);
 
             if ($session->chunk_count + 1 > $session->max_chunks) {
@@ -502,15 +542,25 @@ class ChunkIngestor
 
             $this->assertApplicationChunkCapacity($lockedApplication, $compressedBytes);
 
-            $maxSequence = $session->chunks()
-                ->where('epoch_id', $envelope['epoch_id'])
-                ->max('sequence');
             $highestAllowed = ($maxSequence === null ? -1 : (int) $maxSequence)
                 + (int) config('reel_ingest.maximum_epoch_reorder_distance');
 
             if ($envelope['sequence'] > $highestAllowed) {
                 $this->reject('reorder_distance_exceeded', 409);
             }
+
+            $presentSequences = $session->chunks()
+                ->where('epoch_id', $envelope['epoch_id'])
+                ->pluck('sequence')
+                ->map(fn (mixed $sequence): int => (int) $sequence)
+                ->all();
+            $expectedSequence = 0;
+
+            while (in_array($expectedSequence, $presentSequences, true)) {
+                $expectedSequence++;
+            }
+
+            $reorderDistance = max(0, $envelope['sequence'] - $expectedSequence);
 
             $objectKey = $this->objectKey($lockedApplication, $session, $envelope);
             $disk = Storage::disk((string) config('filesystems.default'));
@@ -540,6 +590,10 @@ class ChunkIngestor
                 'chunk_count' => 1,
                 'compressed_bytes' => $compressedBytes,
             ]);
+
+            if ($reorderDistance > $session->max_reorder_distance) {
+                $session->forceFill(['max_reorder_distance' => $reorderDistance])->save();
+            }
 
             return new ChunkIngestResult(false, $origin);
         }, 3);
@@ -596,6 +650,9 @@ class ChunkIngestor
             'started_at' => $issuedAt,
             'max_event_time' => date_create_immutable('@'.$maxEventTime),
             'upload_cutoff_at' => $expiresAt,
+            'maximum_expires_at' => $issuedAt->getTimestamp()
+                + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'status_changed_at' => now(),
         ]);
         $session->status = RecordingSessionStatus::Recording;
         $session->save();
