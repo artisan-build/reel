@@ -8,6 +8,7 @@ use ArtisanBuild\ReelClient\SessionGrant;
 use ArtisanBuild\ReelClient\SessionGrantContext;
 use ArtisanBuild\ReelClient\SessionGrantVerifier;
 use ArtisanBuild\ReelClient\Tests\TestCase;
+use Illuminate\Foundation\Auth\User as Authenticatable;
 use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Hmac\Sha256 as HmacSha256;
 use Lcobucci\JWT\Signer\Key\InMemory;
@@ -54,6 +55,8 @@ function reelSignedGrant(array $overrides = []): string
             'max_compressed_bytes' => 1000,
             'max_chunk_bytes' => 100,
         ])
+        ->withClaim('application_user_id', $overrides['application_user_id'] ?? null)
+        ->withClaim('release_id', $overrides['release_id'] ?? null)
         ->getToken($configuration->signer(), $configuration->signingKey())
         ->toString();
 }
@@ -83,6 +86,7 @@ beforeEach(function (): void {
         'reel.application_id' => 'app-id',
         'reel.private_key' => KeyMaterial::encodePrivateKey($key['private']),
         'reel.grant.max_sessions_per_visitor' => 3,
+        'reel.release_id' => 'deploy-test',
     ]);
 });
 
@@ -119,9 +123,41 @@ it('issues an explicitly typed asymmetric grant only after consent', function ()
         ->and($token->claims()->get('protocol_version'))->toBe(1)
         ->and($token->claims()->get('jti'))->toBeString()->not->toBeEmpty()
         ->and($token->claims()->get('max_event_time'))->toBeInt()
+        ->and($token->claims()->get('application_user_id'))->toBeNull()
+        ->and($token->claims()->get('release_id'))->toBe('deploy-test')
         ->and($token->claims()->get('ceilings'))->toHaveKeys([
             'max_chunks', 'max_compressed_bytes', 'max_chunk_bytes',
         ]);
+});
+
+it('signs only an authenticated Eloquent primary key and configured release into the grant', function (): void {
+    $user = new class extends Authenticatable {};
+    $user->forceFill([
+        'id' => 42,
+        'name' => 'Private Name',
+        'email' => 'private@example.test',
+    ]);
+
+    $response = $this->actingAs($user)
+        ->postJson(route('reel.session-grants.store'), ['consent' => true])
+        ->assertOk();
+    $token = (new SessionGrantVerifier)->verify(
+        $response->json('grant'),
+        reelTestKeyPair()['public'],
+        reelGrantContext((string) $response->json('session_id'), [
+            'allowed_origins' => ['http://localhost'],
+            'maximum_ceilings' => [
+                'max_chunks' => (int) config('reel.grant.max_chunks'),
+                'max_compressed_bytes' => (int) config('reel.grant.max_compressed_bytes'),
+                'max_chunk_bytes' => (int) config('reel.grant.max_chunk_bytes'),
+            ],
+        ]),
+    );
+
+    expect($token->claims()->get('application_user_id'))->toBe('42')
+        ->and($token->claims()->get('release_id'))->toBe('deploy-test')
+        ->and(json_encode($token->claims()->all(), JSON_THROW_ON_ERROR))
+        ->not->toContain('Private Name', 'private@example.test');
 });
 
 it('ignores a browser supplied session id and records a bounded expiring server set', function (): void {

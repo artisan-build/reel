@@ -11,4 +11,5 @@ Artisan::command('inspire', function (): void {
 Schedule::command('reel:finalize-sessions')->everyMinute()->withoutOverlapping();
 Schedule::command('reel:retain-sessions')->hourly()->withoutOverlapping();
 Schedule::command('reel:retry-deletions --apply')->hourly()->withoutOverlapping();
+Schedule::command('reel:resume-erasures --apply')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('reel:sweep-orphans')->daily()->withoutOverlapping();

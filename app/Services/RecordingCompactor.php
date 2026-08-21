@@ -24,6 +24,7 @@ class RecordingCompactor
     public function __construct(
         private readonly ReplayManifest $manifestReader,
         private readonly OperationalCounters $counters,
+        private readonly ObjectMutationLock $locks,
     ) {}
 
     public function compact(int $recordingSessionId): void
@@ -61,7 +62,27 @@ class RecordingCompactor
             return;
         }
 
+        $prefixLock = implode('/', [
+            trim((string) config('reel_ingest.object_prefix'), '/'),
+            $session->application->public_id,
+            $session->session_id,
+        ]);
+        $this->locks->acquire($prefixLock);
+
         try {
+            $currentStatus = RecordingSession::query()->whereKey($recordingSessionId)->value('status');
+            $currentStatus = $currentStatus instanceof RecordingSessionStatus
+                ? $currentStatus
+                : RecordingSessionStatus::tryFrom((string) $currentStatus);
+
+            if ($currentStatus !== $session->status) {
+                if ($currentStatus === RecordingSessionStatus::Deleting) {
+                    $this->counters->increment('post_delete_publish_preventions');
+                }
+
+                return;
+            }
+
             $disk = Storage::disk($diskName);
 
             if ($session->status === RecordingSessionStatus::Ready) {
@@ -180,6 +201,7 @@ class RecordingCompactor
 
             throw $exception;
         } finally {
+            $this->locks->release($prefixLock);
             $durationMs = max(1, (int) ((hrtime(true) - $startedAt) / 1_000_000));
             $peakMemoryBytes = memory_get_peak_usage(true);
             RecordingSession::query()

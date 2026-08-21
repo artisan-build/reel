@@ -16,6 +16,7 @@ use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
 use App\Services\OperationalCounters;
 use App\Services\RecordingCompactor;
+use App\Services\RecordingDeletion;
 use App\Services\ReplayManifest;
 use App\Services\SessionFinalizer;
 use ArtisanBuild\ReelClient\Envelope;
@@ -314,6 +315,10 @@ it('retains temporary chunks and schedules exact candidate cleanup when deletion
         CleanupCompactionCandidate::class,
         fn (CleanupCompactionCandidate $job): bool => $job->candidateKey === $candidateKey && $job->disk === 'local',
     );
+
+    expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'finish_concurrent_deletion'))->toBeTrue()
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted);
+    expect(Storage::disk('local')->allFiles(resolve(RecordingDeletion::class)->prefix($session->fresh(['application']))))->toBe([]);
 });
 
 it('blocks publication after a concurrent transition to failed', function (): void {

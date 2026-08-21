@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Enums\RecordingSessionStatus;
+use App\Events\ReplayPayloadRead;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
@@ -12,6 +13,7 @@ use App\Models\User;
 use App\Services\ReplayManifest;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
@@ -496,6 +498,25 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
         ->and($views->every(fn (ReplayView $view): bool => $view->viewed_at !== null))->toBeTrue();
     expect(DB::getSchemaBuilder()->getColumnListing('replay_views'))
         ->not->toContain('dom', 'events', 'payload', 'manifest');
+});
+
+it('fails replay delivery closed when deletion wins after object reading but before view attribution', function (): void {
+    $viewer = User::factory()->create();
+    $session = makeReplaySession(replayEvents('Must not escape after deletion'));
+    Event::listen(ReplayPayloadRead::class, function (ReplayPayloadRead $event): void {
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Deleting, 'concurrent_replay_deletion');
+    });
+
+    $content = $this->actingAs($viewer)
+        ->get(signedReplayUrl($session))
+        ->assertOk()
+        ->assertSee('replay_deletion_started')
+        ->getContent();
+
+    expect($content)->not->toContain('Must not escape after deletion')
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and(ReplayView::query()->where('recording_session_id', $session->getKey())->count())->toBe(0);
 });
 
 it('mints a fresh signed player URL only when replay loading is requested', function (): void {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Enums\CredentialStatus;
 use App\Enums\RecordingSessionStatus;
+use App\Jobs\DeleteUserErasureBatch;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
@@ -12,7 +13,9 @@ use App\Models\RecordingEpoch;
 use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
 use App\Models\User;
+use App\Models\UserErasureAudit;
 use App\Services\ChunkPrivacyValidator;
+use App\Services\UserErasure;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
@@ -81,6 +84,8 @@ function ingestGrant(array $context, array $overrides = []): string
             'max_chunk_bytes' => $application->max_compressed_chunk_bytes,
         ],
         $overrides['grant_id'] ?? 'ingest-grant-id',
+        $overrides['application_user_id'] ?? null,
+        $overrides['release_id'] ?? null,
     );
 }
 
@@ -119,6 +124,8 @@ function customIngestGrant(array $context, array $overrides = []): string
             'max_compressed_bytes' => $application->max_compressed_bytes_per_session,
             'max_chunk_bytes' => $application->max_compressed_chunk_bytes,
         ])
+        ->withClaim('application_user_id', $overrides['application_user_id'] ?? null)
+        ->withClaim('release_id', $overrides['release_id'] ?? null)
         ->getToken($configuration->signer(), $configuration->signingKey())
         ->toString();
 }
@@ -1458,6 +1465,45 @@ it('assigns a started-at maximum expiry to newly accepted sessions', function ()
     expect($session->maximum_expires_at)->not->toBeNull()
         ->and($session->maximum_expires_at->getTimestamp() - $session->started_at->getTimestamp())
         ->toBe((int) config('reel_ingest.maximum_session_retention_seconds'));
+});
+
+it('erases a real session whose user and release metadata came only from its verified grant', function (): void {
+    Queue::fake();
+    $context = ingestContext();
+    $applicationUserId = 'customer-from-real-grant';
+    $grant = ingestGrant($context, [
+        'application_user_id' => $applicationUserId,
+        'release_id' => 'deploy-from-real-grant',
+    ]);
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['grant' => $grant]))->assertAccepted();
+    $session = RecordingSession::query()->sole();
+    $object = $session->chunks()->sole()->object_key;
+
+    expect($session->application_user_id)->toBe($applicationUserId)
+        ->and($session->release_id)->toBe('deploy-from-real-grant');
+
+    $administrator = User::factory()->admin()->create();
+    $audit = resolve(UserErasure::class)->erase(
+        $context['application'],
+        $applicationUserId,
+        $administrator,
+        true,
+    );
+    Queue::assertPushed(
+        DeleteUserErasureBatch::class,
+        fn (DeleteUserErasureBatch $job): bool => $job->batchId === $audit->batch_id,
+    );
+    expect($audit->matched_count)->toBe(1)
+        ->and($audit->outcome)->toBe('running')
+        ->and($session->fresh()->erasure_batch_id)->toBe($audit->batch_id)
+        ->and(serialize(new DeleteUserErasureBatch($audit->batch_id)))->not->toContain($applicationUserId);
+
+    (new DeleteUserErasureBatch($audit->batch_id))->handle(resolve(UserErasure::class));
+
+    expect($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
+        ->and($session->fresh()->application_user_id)->toBeNull();
+    Storage::disk('local')->assertMissing($object);
+    expect(UserErasureAudit::query()->where('batch_id', $audit->batch_id)->sole()->outcome)->toBe('completed');
 });
 
 it('assigns epoch chronology from server first-seen order rather than client ids', function (): void {

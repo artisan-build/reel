@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\RecordingDeletionOutcome;
 use App\Enums\RecordingSessionStatus;
 use App\Models\RecordingSession;
 use App\Services\RecordingDeletion;
@@ -25,9 +26,18 @@ class RetainRecordingSessions extends Command
             ->pluck('id');
         $deleted = 0;
         $failed = 0;
+        $skipped = 0;
 
         foreach ($ids as $id) {
-            $deletion->delete((int) $id, 'retention_expired') ? $deleted++ : $failed++;
+            $outcome = $deletion->deleteIfDue((int) $id);
+
+            if ($outcome->completed()) {
+                $deleted++;
+            } elseif ($outcome === RecordingDeletionOutcome::Incomplete) {
+                $failed++;
+            } else {
+                $skipped++;
+            }
         }
 
         if ($failed === 0) {
@@ -37,7 +47,7 @@ class RetainRecordingSessions extends Command
             ]);
         }
 
-        $this->components->info("Deleted {$deleted} expired sessions; {$failed} remain retryable.");
+        $this->components->info("Deleted {$deleted} expired sessions; skipped {$skipped}; {$failed} remain retryable.");
 
         return $failed === 0 ? self::SUCCESS : self::FAILURE;
     }

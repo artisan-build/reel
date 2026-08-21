@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use App\Enums\RecordingSessionStatus;
+use App\Events\OrphanObjectEligible;
 use App\Exceptions\RetentionRejected;
+use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
@@ -16,10 +18,12 @@ use App\Services\RecordingProtection;
 use App\Services\ReplayManifest;
 use App\Services\RetentionDiagnostics;
 use App\Services\SessionFinalizer;
+use App\Services\UserErasure;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
@@ -135,6 +139,19 @@ it('deletes only overdue unprotected sessions while protected sessions survive t
         ->and($protected->fresh()->status)->toBe(RecordingSessionStatus::Ready)
         ->and($protected->fresh()->protected_by)->toBe($owner->getKey());
     Storage::disk('local')->assertMissing($ordinaryObject)->assertExists($protectedObject);
+});
+
+it('records and skips a stale retention selection whose deletion deadline moved', function (): void {
+    $session = makeRetentionSession(['delete_not_before' => now()->subSecond()]);
+    $session->forceFill(['delete_not_before' => now()->addHours(72)])->save();
+
+    $outcome = resolve(RecordingDeletion::class)->deleteIfDue($session->getKey());
+
+    expect($outcome->value)->toBe('skipped_deadline')
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($session->fresh()->retention_skip_reason)->toBe('deadline_moved_after_selection')
+        ->and($session->fresh()->retention_skipped_at)->not->toBeNull();
+    Storage::disk('local')->assertExists($session->manifest['objects'][0]['key']);
 });
 
 it('protects only ready sessions and cannot replace the first protection owner', function (): void {
@@ -255,6 +272,7 @@ it('prevents ordinary deletion while an administrator immediately overrides prot
 });
 
 it('requires exact erasure confirmation and audits a batch without the erased user id', function (): void {
+    Queue::fake();
     $administrator = User::factory()->admin()->create();
     $application = Application::factory()->create();
     $erasedId = 'customer-sensitive-42';
@@ -281,15 +299,30 @@ it('requires exact erasure confirmation and audits a batch without the erased us
     ])->assertRedirect();
 
     $audit = UserErasureAudit::query()->sole();
+    Queue::assertPushed(
+        DeleteUserErasureBatch::class,
+        fn (DeleteUserErasureBatch $job): bool => $job->batchId === $audit->batch_id,
+    );
     expect($audit->actor_user_id)->toBe($administrator->getKey())
         ->and($audit->application_id)->toBe($application->getKey())
         ->and($audit->matched_count)->toBe(2)
-        ->and($audit->deleted_count)->toBe(2)
+        ->and($audit->deleted_count)->toBe(0)
         ->and($audit->failed_count)->toBe(0)
-        ->and($audit->outcome)->toBe('completed')
+        ->and($audit->outcome)->toBe('running')
         ->and($audit->batch_id)->toMatch('/^[0-9a-f-]{36}$/')
         ->and(json_encode($audit->getAttributes(), JSON_THROW_ON_ERROR))->not->toContain($erasedId)
         ->and(DB::getSchemaBuilder()->getColumnListing('user_erasure_audits'))->not->toContain('application_user_id');
+    expect($protected->fresh()->erasure_batch_id)->toBe($audit->batch_id)
+        ->and($ordinary->fresh()->erasure_batch_id)->toBe($audit->batch_id)
+        ->and(serialize(new DeleteUserErasureBatch($audit->batch_id)))->not->toContain($erasedId);
+
+    expect(resolve(RecordingDeletion::class)->delete($protected->getKey(), 'interrupted_erasure_attempt'))->toBeTrue();
+    (new DeleteUserErasureBatch($audit->batch_id))->handle(resolve(UserErasure::class));
+
+    $audit->refresh();
+    expect($audit->deleted_count)->toBe(2)
+        ->and($audit->failed_count)->toBe(0)
+        ->and($audit->outcome)->toBe('completed');
     expect($protected->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
         ->and($protected->fresh()->application_user_id)->toBeNull()
         ->and($ordinary->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
@@ -408,6 +441,48 @@ it('deletes only old unreferenced objects and suspension blocks destructive orph
     expect(resolve(OrphanSweeper::class)->sweep()['suspended'])->toBeTrue();
     Storage::disk('local')->assertExists($blocked);
     expect(DB::table('retention_states')->where('id', 1)->value('orphan_sweeper_suspended'))->toBeTrue();
+});
+
+it('rechecks orphan references and modification time under the object lock before deleting', function (): void {
+    config()->set('reel_retention.orphan_safety_delay_hours', 1);
+    $session = makeRetentionSession();
+    $referenced = 'reel/chunks/orphan-race/referenced/old.gz';
+    $modified = 'reel/chunks/orphan-race/modified/old.gz';
+    Storage::disk('local')->put($referenced, 'old-reference');
+    Storage::disk('local')->put($modified, 'old-modified');
+    touch(Storage::disk('local')->path($referenced), now()->subHours(2)->getTimestamp());
+    touch(Storage::disk('local')->path($modified), now()->subHours(2)->getTimestamp());
+    Event::listen(OrphanObjectEligible::class, function (OrphanObjectEligible $event) use (
+        $session,
+        $referenced,
+        $modified,
+    ): void {
+        if ($event->objectKey === $referenced) {
+            $session->chunks()->create([
+                'application_id' => $session->application_id,
+                'epoch_id' => 'late-reference',
+                'sequence' => 0,
+                'checksum' => hash('sha256', 'old-reference'),
+                'compressed_bytes' => 13,
+                'decompressed_bytes' => 13,
+                'event_started_at' => 1,
+                'event_ended_at' => 1,
+                'object_key' => $referenced,
+            ]);
+        }
+
+        if ($event->objectKey === $modified) {
+            Storage::disk('local')->put($modified, 'newly-written');
+            touch(Storage::disk('local')->path($modified), $event->observedLastModified + 1);
+        }
+    });
+
+    $result = resolve(OrphanSweeper::class)->sweep();
+
+    expect($result['eligible_count'])->toBe(2)
+        ->and($result['deleted_count'])->toBe(0)
+        ->and($session->chunks()->where('object_key', $referenced)->exists())->toBeTrue();
+    Storage::disk('local')->assertExists($referenced)->assertExists($modified);
 });
 
 it('keeps storage reconciliation dry by default then explicitly records high waters and resumes', function (): void {
@@ -581,6 +656,106 @@ PHP);
         ->and($persisted->protected_at)->toBeNull()
         ->and($persisted->protected_by)->toBeNull()
         ->and($persisted->protectionEvents()->count())->toBe(0);
+
+    DB::connection($raceConnection)->table('applications')->where('id', $application->getKey())->delete();
+    DB::connection($raceConnection)->table('users')->where('id', $actor->getKey())->delete();
+    DB::purge($raceConnection);
+});
+
+it('lets protection win when a stale retention selection waits on the real PostgreSQL row lock', function (): void {
+    $raceConnection = 'retention_protection_race';
+    config()->set("database.connections.{$raceConnection}", config('database.connections.pgsql'));
+    $actor = User::factory()->make();
+    $actor->setConnection($raceConnection);
+    $actor->save();
+    $application = Application::factory()->make();
+    $application->setConnection($raceConnection);
+    $application->save();
+    $credential = new ApplicationCredential;
+    $credential->setConnection($raceConnection);
+    $credential->forceFill([
+        'application_id' => $application->getKey(),
+        'algorithm' => ApplicationCredential::ALGORITHM,
+        'enrollment_code_hash' => hash('sha256', 'protection-race'),
+        'enrollment_expires_at' => now()->addMinute(),
+    ])->save();
+    $session = new RecordingSession;
+    $session->setConnection($raceConnection);
+    $session->fill([
+        'application_id' => $application->getKey(),
+        'application_credential_id' => $credential->getKey(),
+        'session_id' => bin2hex(random_bytes(32)),
+        'grant_id_hash' => hash('sha256', 'protection-race'),
+        'origin' => 'https://race.example',
+        'protocol_version' => Envelope::VERSION,
+        'max_chunks' => 1,
+        'max_compressed_bytes' => 100,
+        'max_chunk_bytes' => 100,
+        'started_at' => now()->subDays(31),
+        'max_event_time' => now()->subDays(31),
+        'upload_cutoff_at' => now()->subDays(31),
+        'maximum_expires_at' => now()->subDay(),
+        'expires_at' => now()->subDay(),
+        'delete_not_before' => now()->subMinute(),
+        'status_changed_at' => now(),
+    ]);
+    $session->forceFill(['status' => RecordingSessionStatus::Ready])->save();
+    $connection = DB::connection($raceConnection);
+    $connection->beginTransaction();
+    $locked = RecordingSession::on($raceConnection)->lockForUpdate()->findOrFail($session->getKey());
+    $locked->forceFill([
+        'protected_at' => now(),
+        'protected_by' => $actor->getKey(),
+    ])->save();
+    $resultPath = sys_get_temp_dir().'/retention-protection-race-result-'.Str::uuid().'.json';
+    $scriptPath = sys_get_temp_dir().'/retention-protection-race-worker-'.Str::uuid().'.php';
+    file_put_contents($scriptPath, <<<'PHP'
+<?php
+
+require $argv[1].'/vendor/autoload.php';
+$app = require $argv[1].'/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+$outcome = resolve(App\Services\RecordingDeletion::class)->deleteIfDue((int) $argv[2]);
+file_put_contents($argv[3], json_encode(['outcome' => $outcome->value], JSON_THROW_ON_ERROR));
+PHP);
+    $database = config('database.connections.pgsql');
+    $process = new Process([
+        PHP_BINARY,
+        $scriptPath,
+        base_path(),
+        (string) $session->getKey(),
+        $resultPath,
+    ], base_path(), [
+        'APP_ENV' => 'testing',
+        'APP_KEY' => (string) config('app.key'),
+        'DB_CONNECTION' => 'pgsql',
+        'DB_HOST' => (string) $database['host'],
+        'DB_PORT' => (string) $database['port'],
+        'DB_DATABASE' => (string) $database['database'],
+        'DB_USERNAME' => (string) $database['username'],
+        'DB_PASSWORD' => (string) $database['password'],
+        'PGAPPNAME' => 'reel-retention-protection-race',
+    ]);
+    $process->start();
+    Sleep::usleep(500_000);
+    $waitType = $connection->table('pg_stat_activity')
+        ->where('application_name', 'reel-retention-protection-race')
+        ->value('wait_event_type');
+    expect($process->isRunning())->toBeTrue('Deletion did not wait on the protection row lock.')
+        ->and($waitType)->toBe('Lock');
+    $connection->commit();
+    $process->wait();
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput().$process->getOutput());
+    $result = json_decode((string) file_get_contents($resultPath), true, flags: JSON_THROW_ON_ERROR);
+    @unlink($resultPath);
+    @unlink($scriptPath);
+
+    $persisted = RecordingSession::on($raceConnection)->findOrFail($session->getKey());
+    expect($result)->toBe(['outcome' => 'skipped_protected'])
+        ->and($persisted->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($persisted->protected_by)->toBe($actor->getKey())
+        ->and($persisted->retention_skip_reason)->toBe('protected_after_selection')
+        ->and($persisted->retention_skipped_at)->not->toBeNull();
 
     DB::connection($raceConnection)->table('applications')->where('id', $application->getKey())->delete();
     DB::connection($raceConnection)->table('users')->where('id', $actor->getKey())->delete();

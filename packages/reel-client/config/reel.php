@@ -10,6 +10,7 @@ return [
     'url' => env('REEL_URL'),
     'application_id' => env('REEL_APPLICATION_ID'),
     'private_key' => env('REEL_PRIVATE_KEY'),
+    'release_id' => env('REEL_RELEASE_ID'),
     'correlation' => [
         'context_export' => env('REEL_CONTEXT_EXPORT', 'off'),
         'approximate_window_seconds' => 5 * 60,

@@ -207,6 +207,7 @@ class RecordingSession extends Model
             'unprotected_at' => 'immutable_datetime',
             'deletion_started_at' => 'immutable_datetime',
             'deletion_completed_at' => 'immutable_datetime',
+            'retention_skipped_at' => 'immutable_datetime',
         ];
     }
 }

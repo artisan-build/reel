@@ -3,14 +3,18 @@
 namespace App\Services;
 
 use App\Enums\RecordingSessionStatus;
+use App\Events\OrphanObjectEligible;
 use App\Models\RecordingSession;
 use Carbon\CarbonImmutable;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class OrphanSweeper
 {
+    public function __construct(private readonly ObjectMutationLock $locks) {}
+
     /** @return array{suspended: bool, orphan_count: int, eligible_count: int, deleted_count: int} */
     public function sweep(): array
     {
@@ -24,22 +28,38 @@ class OrphanSweeper
             $inventory = $this->inventory();
             $disk = Storage::disk((string) config('filesystems.default'));
             $deleted = 0;
+            $failed = 0;
 
             foreach ($inventory['eligible_orphans'] as $object) {
-                $disk->delete($object);
+                $observedLastModified = $inventory['observed_last_modified'][$object];
+                event(new OrphanObjectEligible($object, $observedLastModified));
+                $result = $this->locks->synchronized(
+                    $this->sessionPrefix($object),
+                    fn (): string => DB::transaction(function () use ($disk, $object, $observedLastModified): string {
+                        $this->locks->acquireForTransaction($object);
 
-                if (! $disk->exists($object)) {
+                        if ($this->isReferenced($object)
+                            || ! $disk->exists($object)
+                            || $disk->lastModified($object) !== $observedLastModified) {
+                            return 'skipped';
+                        }
+
+                        $disk->delete($object);
+
+                        return $this->objectExists($disk, $object) ? 'failed' : 'deleted';
+                    }, 3),
+                );
+
+                if ($result === 'deleted') {
                     $deleted++;
+                } elseif ($result === 'failed') {
+                    $failed++;
                 }
             }
 
-            $remaining = array_values(array_filter(
-                $inventory['eligible_orphans'],
-                $disk->exists(...),
-            ));
             DB::table('retention_states')->where('id', 1)->update([
                 'last_orphan_sweep_at' => now(),
-                'last_orphan_sweep_error' => $remaining === [] ? null : 'eligible_objects_remain',
+                'last_orphan_sweep_error' => $failed === 0 ? null : 'eligible_objects_remain',
                 'updated_at' => now(),
             ]);
 
@@ -73,6 +93,7 @@ class OrphanSweeper
      *     files: list<string>,
      *     orphan_count: int,
      *     eligible_orphans: list<string>,
+     *     observed_last_modified: array<string, int>,
      *     manifest_without_object_count: int,
      *     object_without_live_reference_count: int,
      *     database_high_water_at: ?CarbonImmutable,
@@ -89,9 +110,12 @@ class OrphanSweeper
         $cutoff = now()->subHours((int) config('reel_retention.orphan_safety_delay_hours'));
         $eligible = [];
         $objectHighWater = null;
+        $observedLastModified = [];
 
         foreach ($files as $file) {
-            $modifiedAt = CarbonImmutable::createFromTimestamp($disk->lastModified($file));
+            $lastModified = $disk->lastModified($file);
+            $observedLastModified[$file] = $lastModified;
+            $modifiedAt = CarbonImmutable::createFromTimestamp($lastModified);
             $objectHighWater = $objectHighWater === null || $modifiedAt->isAfter($objectHighWater)
                 ? $modifiedAt
                 : $objectHighWater;
@@ -107,6 +131,7 @@ class OrphanSweeper
             'files' => $files,
             'orphan_count' => count($orphans),
             'eligible_orphans' => $eligible,
+            'observed_last_modified' => $observedLastModified,
             'manifest_without_object_count' => count(array_diff($references, $files)),
             'object_without_live_reference_count' => count($orphans),
             'database_high_water_at' => $databaseHighWater === null ? null : CarbonImmutable::parse($databaseHighWater),
@@ -139,5 +164,37 @@ class OrphanSweeper
         }
 
         return array_values(array_unique($references));
+    }
+
+    private function isReferenced(string $object): bool
+    {
+        if (DB::table('recording_chunks')->whereNull('purged_at')->where('object_key', $object)->exists()) {
+            return true;
+        }
+
+        return RecordingSession::query()
+            ->whereNotIn('status', [RecordingSessionStatus::Deleted])
+            ->whereNotNull('manifest')
+            ->get(['manifest'])
+            ->contains(function (RecordingSession $session) use ($object): bool {
+                $objects = is_array($session->manifest) ? ($session->manifest['objects'] ?? []) : [];
+
+                return collect(is_array($objects) ? $objects : [])->contains(
+                    fn (mixed $entry): bool => is_array($entry) && ($entry['key'] ?? null) === $object,
+                );
+            });
+    }
+
+    private function sessionPrefix(string $object): string
+    {
+        $root = array_values(array_filter(explode('/', trim((string) config('reel_ingest.object_prefix'), '/'))));
+        $segments = explode('/', trim($object, '/'));
+
+        return implode('/', array_slice($segments, 0, count($root) + 2));
+    }
+
+    private function objectExists(FilesystemAdapter $disk, string $object): bool
+    {
+        return $disk->exists($object);
     }
 }
