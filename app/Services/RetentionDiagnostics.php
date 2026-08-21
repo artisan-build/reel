@@ -29,6 +29,7 @@ class RetentionDiagnostics
         $estimatedBytes = (int) RecordingSession::query()
             ->where('status', '!=', RecordingSessionStatus::Deleted)
             ->sum('compressed_bytes');
+        $oldestQueuedAt = DB::table('jobs')->min('created_at');
 
         try {
             $inventory = $this->sweeper->inventory();
@@ -42,6 +43,12 @@ class RetentionDiagnostics
         return [
             ...$this->counters->snapshot(),
             'protected_count' => RecordingSession::query()->whereNotNull('protected_at')->count(),
+            'recent_ingest_count' => RecordingSession::query()->where('created_at', '>=', now()->subMinutes(15))->count(),
+            'sessions_awaiting_compaction' => RecordingSession::query()
+                ->whereIn('status', [RecordingSessionStatus::Closing, RecordingSessionStatus::Compacting])
+                ->count(),
+            'queue_lag_seconds' => $oldestQueuedAt === null ? 0 : max(0, now()->getTimestamp() - (int) $oldestQueuedAt),
+            'failed_jobs_count' => DB::table('failed_jobs')->count(),
             'estimated_storage_bytes' => $estimatedBytes,
             'oldest_overdue_unprotected_expiry' => $overdue === null ? null : (string) $overdue,
             'last_successful_retention_sweep' => $state?->last_retention_sweep_at,

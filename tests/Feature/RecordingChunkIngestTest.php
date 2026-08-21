@@ -1467,6 +1467,23 @@ it('assigns a started-at maximum expiry to newly accepted sessions', function ()
         ->toBe((int) config('reel_ingest.maximum_session_retention_seconds'));
 });
 
+it('holds the PostgreSQL object mutation lock through chunk object and row persistence', function (): void {
+    $lockQueries = [];
+    DB::listen(function (QueryExecuted $query) use (&$lockQueries): void {
+        if (str_contains(strtolower($query->sql), 'pg_advisory_xact_lock')) {
+            $lockQueries[] = $query->sql;
+        }
+    });
+    $context = ingestContext();
+
+    postIngestEnvelope(ingestEnvelope($context))->assertAccepted();
+
+    $chunk = RecordingChunk::query()->sole();
+    expect($lockQueries)->not->toBeEmpty()
+        ->and($chunk->object_key)->toBeString();
+    Storage::disk('local')->assertExists($chunk->object_key);
+});
+
 it('erases a real session whose user and release metadata came only from its verified grant', function (): void {
     Queue::fake();
     $context = ingestContext();

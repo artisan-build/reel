@@ -56,6 +56,10 @@ class RecordingCompactor
                 return $locked->fresh(['application']);
             }
 
+            if (in_array($locked->status, [RecordingSessionStatus::Deleting, RecordingSessionStatus::Deleted], true)) {
+                $this->counters->increment('post_delete_publish_preventions');
+            }
+
             return null;
         });
 

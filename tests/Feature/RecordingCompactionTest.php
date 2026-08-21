@@ -347,6 +347,19 @@ it('rechecks terminal state after acquiring the prefix lock before writing any c
     Queue::assertNothingPushed();
 });
 
+it('counts compaction attempts prevented by both deleting and deleted terminal states', function (): void {
+    $session = createCompactionFixture(status: RecordingSessionStatus::Deleting);
+    $compactor = resolve(RecordingCompactor::class);
+
+    $compactor->compact($session->getKey());
+    $session->transitionTo(RecordingSessionStatus::Deleted, 'deletion_completed_for_counter');
+    $compactor->compact($session->getKey());
+
+    expect(DB::table('operational_counters')
+        ->where('metric', 'post_delete_publish_preventions')
+        ->value('value'))->toBe(2);
+});
+
 it('blocks publication after a concurrent transition to failed', function (): void {
     Queue::fake();
     $session = createCompactionFixture();

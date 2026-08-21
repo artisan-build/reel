@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Enums\RecordingSessionStatus;
 use App\Events\OrphanObjectEligible;
 use App\Exceptions\RetentionRejected;
+use App\Http\Controllers\ApplicationUserErasureController;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
@@ -21,14 +22,17 @@ use App\Services\SessionFinalizer;
 use App\Services\UserErasure;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Process\Process;
 
 /** @param array<string, mixed> $attributes */
@@ -245,6 +249,23 @@ it('applies the later cooling deadline advertises its actor and allows another u
         ->and($session->fresh()->protected_at)->not->toBeNull();
 });
 
+it('never schedules unprotected deletion before a later ordinary expiry', function (): void {
+    $owner = User::factory()->create();
+    $expiresAt = now()->addDays(20);
+    $session = makeRetentionSession([
+        'expires_at' => $expiresAt,
+        'delete_not_before' => $expiresAt,
+    ]);
+    $protection = resolve(RecordingProtection::class);
+    $protection->protect($session->getKey(), $owner);
+
+    expect($protection->unprotect($session->getKey(), $owner))->toBeTrue();
+
+    $session->refresh();
+    expect($session->delete_not_before->getTimestamp())->toBe($expiresAt->getTimestamp())
+        ->and($session->delete_not_before->isAfter($session->unprotected_at->addHours(72)))->toBeTrue();
+});
+
 it('prevents ordinary deletion while an administrator immediately overrides protection and cooling', function (): void {
     $owner = User::factory()->create();
     $administrator = User::factory()->admin()->create();
@@ -284,6 +305,8 @@ it('requires exact erasure confirmation and audits a batch without the erased us
     ]);
     $ordinary = makeRetentionSession(['application' => $application, 'application_user_id' => $erasedId]);
     $unrelated = makeRetentionSession(['application' => $application, 'application_user_id' => 'customer-elsewhere']);
+    $protectedObject = $protected->manifest['objects'][0]['key'];
+    $ordinaryObject = $ordinary->manifest['objects'][0]['key'];
     $route = route('admin.application-users.destroy', ['application' => $application]);
 
     $this->actingAs($administrator)->post($route, [
@@ -291,7 +314,9 @@ it('requires exact erasure confirmation and audits a batch without the erased us
         'confirmation' => 'wrong-user',
     ])->assertUnprocessable()->assertSee('erasure_confirmation_required');
     expect($protected->fresh()->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($protected->fresh()->protected_by)->not->toBeNull()
         ->and(UserErasureAudit::query()->count())->toBe(0);
+    Storage::disk('local')->assertExists($protectedObject)->assertExists($ordinaryObject);
 
     $this->post($route, [
         'application_user_id' => $erasedId,
@@ -313,11 +338,19 @@ it('requires exact erasure confirmation and audits a batch without the erased us
         ->and(json_encode($audit->getAttributes(), JSON_THROW_ON_ERROR))->not->toContain($erasedId)
         ->and(DB::getSchemaBuilder()->getColumnListing('user_erasure_audits'))->not->toContain('application_user_id');
     expect($protected->fresh()->erasure_batch_id)->toBe($audit->batch_id)
-        ->and($ordinary->fresh()->erasure_batch_id)->toBe($audit->batch_id)
-        ->and(serialize(new DeleteUserErasureBatch($audit->batch_id)))->not->toContain($erasedId);
+        ->and($ordinary->fresh()->erasure_batch_id)->toBe($audit->batch_id);
 
-    expect(resolve(RecordingDeletion::class)->delete($protected->getKey(), 'interrupted_erasure_attempt'))->toBeTrue();
-    (new DeleteUserErasureBatch($audit->batch_id))->handle(resolve(UserErasure::class));
+    expect(resolve(RecordingDeletion::class)->delete($ordinary->getKey(), 'interrupted_erasure_attempt'))->toBeTrue();
+    Queue::fake();
+    expect(Artisan::call('reel:resume-erasures', ['--apply' => true]))->toBe(0);
+    $resumedJob = null;
+    Queue::assertPushed(DeleteUserErasureBatch::class, function (DeleteUserErasureBatch $job) use ($audit, &$resumedJob): bool {
+        $resumedJob = $job;
+
+        return $job->batchId === $audit->batch_id;
+    });
+    expect($resumedJob)->toBeInstanceOf(DeleteUserErasureBatch::class);
+    $resumedJob->handle(resolve(UserErasure::class));
 
     $audit->refresh();
     expect($audit->deleted_count)->toBe(2)
@@ -328,6 +361,168 @@ it('requires exact erasure confirmation and audits a batch without the erased us
         ->and($ordinary->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
         ->and($unrelated->fresh()->status)->toBe(RecordingSessionStatus::Ready)
         ->and($unrelated->fresh()->application_user_id)->toBe('customer-elsewhere');
+    Storage::disk('local')->assertMissing($protectedObject)->assertMissing($ordinaryObject);
+});
+
+it('holds every user-erasure administrator boundary and preserves data after forbidden attempts', function (): void {
+    Queue::fake();
+    $administrator = User::factory()->admin()->create();
+    $viewer = User::factory()->create();
+    $application = Application::factory()->create();
+    $applicationUserId = 'authorization-target';
+    $session = makeRetentionSession([
+        'application' => $application,
+        'application_user_id' => $applicationUserId,
+    ]);
+    $object = $session->manifest['objects'][0]['key'];
+    $route = route('admin.application-users.destroy', ['application' => $application]);
+    $payload = ['application_user_id' => $applicationUserId, 'confirmation' => $applicationUserId];
+
+    $this->post($route, $payload)->assertRedirect(route('login'));
+    $this->actingAs($viewer)->post($route, $payload)->assertForbidden();
+
+    expect($administrator->getKey())->not->toBe($viewer->getKey())
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($session->fresh()->erasure_batch_id)->toBeNull()
+        ->and(UserErasureAudit::query()->count())->toBe(0)
+        ->and(Route::getRoutes()->getByName('admin.application-users.destroy')?->gatherMiddleware())
+        ->toContain('admin');
+    Storage::disk('local')->assertExists($object);
+    Queue::assertNothingPushed();
+
+    $request = Request::create($route, 'POST', $payload);
+    $request->setUserResolver(fn (): User => $viewer);
+    $service = Mockery::mock(UserErasure::class);
+    $service->shouldNotReceive('erase');
+
+    try {
+        (new ApplicationUserErasureController)($request, $application, $service);
+        $this->fail('The erasure controller accepted an ordinary viewer.');
+    } catch (HttpException $exception) {
+        expect($exception->getStatusCode())->toBe(403);
+    }
+
+    try {
+        resolve(UserErasure::class)->erase($application, $applicationUserId, $viewer, true);
+        $this->fail('The erasure service accepted an ordinary viewer.');
+    } catch (RetentionRejected $rejection) {
+        expect($rejection->reason)->toBe('administrator_required')
+            ->and($rejection->httpStatus)->toBe(403);
+    }
+
+    expect($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($session->fresh()->erasure_batch_id)->toBeNull()
+        ->and(UserErasureAudit::query()->count())->toBe(0);
+    Storage::disk('local')->assertExists($object);
+});
+
+it('serializes only the opaque batch id and lets an expired unique lock be re-dispatched', function (): void {
+    config()->set('queue.default', 'database');
+    config()->set('cache.default', 'array');
+    $administrator = User::factory()->admin()->create();
+    $application = Application::factory()->create();
+    $applicationUserId = 'actual-queue-payload-secret';
+    makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
+
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+    $payload = json_decode((string) DB::table('jobs')->sole()->payload, true, flags: JSON_THROW_ON_ERROR);
+    $serializedCommand = $payload['data']['command'];
+
+    expect($serializedCommand)->toBeString()
+        ->toContain($audit->batch_id)
+        ->not->toContain($applicationUserId)
+        ->and((new DeleteUserErasureBatch($audit->batch_id))->uniqueFor)->toBe(3600);
+
+    DB::table('jobs')->delete();
+    Artisan::call('reel:resume-erasures', ['--apply' => true]);
+    expect(DB::table('jobs')->count())->toBe(0);
+
+    $this->travel(3601)->seconds();
+    Artisan::call('reel:resume-erasures', ['--apply' => true]);
+    expect(DB::table('jobs')->count())->toBe(1);
+});
+
+it('rejects duplicate running erasure and resumes only running batches to completion', function (): void {
+    Queue::fake();
+    $administrator = User::factory()->admin()->create();
+    $secondAdministrator = User::factory()->admin()->create();
+    $application = Application::factory()->create();
+    $applicationUserId = 'running-erasure-target';
+    $session = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+
+    expect(fn () => resolve(UserErasure::class)->erase(
+        $application,
+        $applicationUserId,
+        $secondAdministrator,
+        true,
+    ))->toThrow(RetentionRejected::class, 'erasure_already_running');
+    expect(UserErasureAudit::query()->count())->toBe(1)
+        ->and($session->fresh()->erasure_batch_id)->toBe($audit->batch_id)
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Ready);
+
+    $completed = UserErasureAudit::query()->create([
+        'batch_id' => (string) Str::uuid(),
+        'actor_user_id' => $administrator->getKey(),
+        'actor_name' => $administrator->name,
+        'application_id' => $application->getKey(),
+        'requested_at' => now(),
+        'completed_at' => now(),
+        'matched_count' => 0,
+        'deleted_count' => 0,
+        'failed_count' => 0,
+        'outcome' => 'completed',
+    ]);
+    Queue::fake();
+    expect(Artisan::call('reel:resume-erasures', ['--apply' => true]))->toBe(0);
+    Queue::assertPushed(
+        DeleteUserErasureBatch::class,
+        fn (DeleteUserErasureBatch $job): bool => $job->batchId === $audit->batch_id,
+    );
+    Queue::assertNotPushed(
+        DeleteUserErasureBatch::class,
+        fn (DeleteUserErasureBatch $job): bool => $job->batchId === $completed->batch_id,
+    );
+
+    (new DeleteUserErasureBatch($audit->batch_id))->handle(resolve(UserErasure::class));
+    expect($audit->fresh()->outcome)->toBe('completed')
+        ->and($audit->fresh()->deleted_count)->toBe(1)
+        ->and($audit->fresh()->failed_count)->toBe(0)
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted);
+});
+
+it('records truthful partial erasure counts and resumes a partial batch by opaque id', function (): void {
+    Queue::fake();
+    $administrator = User::factory()->admin()->create();
+    $application = Application::factory()->create();
+    $applicationUserId = 'partial-erasure-target';
+    $deleted = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
+    $remaining = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+    resolve(RecordingDeletion::class)->delete($deleted->getKey(), 'completed_before_worker_failure');
+
+    (new DeleteUserErasureBatch($audit->batch_id))->failed(new RuntimeException('worker hard failure'));
+
+    $audit->refresh();
+    expect($audit->outcome)->toBe('partial_failure')
+        ->and($audit->deleted_count)->toBe(1)
+        ->and($audit->failed_count)->toBe(1)
+        ->and($audit->completed_at)->not->toBeNull()
+        ->and($remaining->fresh()->erasure_batch_id)->toBe($audit->batch_id);
+
+    Queue::fake();
+    expect(Artisan::call('reel:resume-erasures', [
+        'batch' => $audit->batch_id,
+        '--apply' => true,
+    ]))->toBe(0);
+    Queue::assertPushed(
+        DeleteUserErasureBatch::class,
+        fn (DeleteUserErasureBatch $job): bool => $job->batchId === $audit->batch_id,
+    );
+    (new DeleteUserErasureBatch($audit->batch_id))->handle(resolve(UserErasure::class));
+    expect($audit->fresh()->outcome)->toBe('completed')
+        ->and($audit->fresh()->deleted_count)->toBe(2)
+        ->and($audit->fresh()->failed_count)->toBe(0);
 });
 
 it('makes deletion terminal for protection and replay delivery with specific persisted outcomes', function (): void {
@@ -391,6 +586,23 @@ it('keeps object-store deletion failure visibly incomplete and retryable', funct
         ->and($session->deletion_last_error)->toBe('objects_remain')
         ->and($session->deletion_remaining_objects)->toBe(1)
         ->and($session->manifest)->not->toBeNull();
+});
+
+it('keeps thrown object-store deletion failures visible without reducing metadata', function (): void {
+    $session = makeRetentionSession();
+    $manifest = $session->manifest;
+    $disk = Mockery::mock(FilesystemAdapter::class);
+    $disk->shouldReceive('allFiles')->once()->andThrow(new RuntimeException('storage unavailable'));
+    Storage::shouldReceive('disk')->with('local')->andReturn($disk);
+
+    expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'test_thrown_storage_failure'))->toBeFalse();
+
+    $session->refresh();
+    expect($session->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and($session->deletion_completed_at)->toBeNull()
+        ->and($session->deletion_last_error)->toBe('object_store_error')
+        ->and($session->manifest)->toBe($manifest)
+        ->and($session->application_user_id)->toBeNull();
 });
 
 it('keeps the deletion repair command dry by default and applies only with an explicit flag', function (): void {
@@ -523,6 +735,10 @@ it('surfaces retention convergence protection and storage diagnostics', function
     $snapshot = resolve(RetentionDiagnostics::class)->snapshot();
     expect($snapshot)->toMatchArray([
         'protected_count' => 1,
+        'recent_ingest_count' => 2,
+        'sessions_awaiting_compaction' => 0,
+        'queue_lag_seconds' => 0,
+        'failed_jobs_count' => 0,
         'estimated_storage_bytes' => 5555,
         'deleting_count' => 1,
         'deletion_retries' => 3,

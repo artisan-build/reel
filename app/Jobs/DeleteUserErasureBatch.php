@@ -14,6 +14,8 @@ class DeleteUserErasureBatch implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
+    public int $uniqueFor = 3600;
+
     public function __construct(public readonly string $batchId) {}
 
     public function uniqueId(): string

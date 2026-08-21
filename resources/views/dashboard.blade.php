@@ -15,6 +15,10 @@
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-test="retention-diagnostics">
             @foreach ([
                 'protected_count' => __('Protected recordings'),
+                'recent_ingest_count' => __('Recent ingest sessions'),
+                'sessions_awaiting_compaction' => __('Awaiting compaction'),
+                'queue_lag_seconds' => __('Queue lag seconds'),
+                'failed_jobs_count' => __('Failed jobs'),
                 'estimated_storage_bytes' => __('Estimated storage bytes'),
                 'oldest_overdue_unprotected_expiry' => __('Oldest overdue expiry'),
                 'last_successful_retention_sweep' => __('Last retention sweep'),
