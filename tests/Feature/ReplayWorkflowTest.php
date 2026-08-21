@@ -20,6 +20,32 @@ use Livewire\Livewire;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
 
+function replayJavaScriptCorePath(
+    ?string $configured = null,
+    string $frameworkBinary = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc',
+    ?ExecutableFinder $finder = null,
+): string {
+    if ($configured === null) {
+        $environment = getenv('JSC_BINARY');
+        $configured = is_string($environment) ? $environment : '';
+    }
+
+    $finder ??= new ExecutableFinder;
+    $candidates = [$configured, $frameworkBinary];
+
+    foreach (['jsc', 'jsc-4.1', 'jsc-4.0', 'jsc-4', 'jsc-6.0'] as $name) {
+        $candidates[] = $finder->find($name);
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+
+    throw new RuntimeException('JavaScriptCore is required for player security tests.');
+}
+
 /** @return list<array<string, mixed>> */
 function replayEvents(string $text = 'Safe replay'): array
 {
@@ -715,21 +741,31 @@ it('rejects expired forged and cross-application player delivery URLs', function
     $this->get($crossApplication)->assertNotFound();
 });
 
+it('resolves the CI JavaScriptCore binary name and fails closed when no binary exists', function (): void {
+    $directory = storage_path('framework/testing/jsc-'.bin2hex(random_bytes(8)));
+    $binary = $directory.'/jsc-4.1';
+    $previousPath = getenv('PATH');
+    mkdir($directory);
+    file_put_contents($binary, "#!/bin/sh\nexit 0\n");
+    chmod($binary, 0755);
+
+    try {
+        putenv('PATH='.$directory);
+
+        expect(replayJavaScriptCorePath('', '/missing/jsc'))->toBe($binary);
+        unlink($binary);
+
+        expect(fn (): string => replayJavaScriptCorePath('', '/missing/jsc'))
+            ->toThrow(RuntimeException::class, 'JavaScriptCore is required for player security tests.');
+    } finally {
+        is_file($binary) && unlink($binary);
+        is_dir($directory) && rmdir($directory);
+        is_string($previousPath) ? putenv('PATH='.$previousPath) : putenv('PATH');
+    }
+});
+
 it('executes the shipped message validator and drops wrong-origin nonce type and schema messages', function (): void {
-    $configured = getenv('JSC_BINARY');
-    $finder = new ExecutableFinder;
-    $binary = null;
-
-    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
-        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
-            $binary = $candidate;
-            break;
-        }
-    }
-
-    if ($binary === null) {
-        $this->markTestSkipped('JavaScriptCore is unavailable.');
-    }
+    $binary = replayJavaScriptCorePath();
 
     $process = new Process([
         $binary,
@@ -744,20 +780,7 @@ it('executes the shipped message validator and drops wrong-origin nonce type and
 });
 
 it('round trips real player and shell messages while rejecting exact channel near misses', function (): void {
-    $configured = getenv('JSC_BINARY');
-    $finder = new ExecutableFinder;
-    $binary = null;
-
-    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
-        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
-            $binary = $candidate;
-            break;
-        }
-    }
-
-    if ($binary === null) {
-        $this->markTestSkipped('JavaScriptCore is unavailable.');
-    }
+    $binary = replayJavaScriptCorePath();
 
     $process = new Process([
         $binary,
@@ -776,20 +799,7 @@ it('round trips real player and shell messages while rejecting exact channel nea
 });
 
 it('executes player controls while ignoring an untrusted command origin', function (): void {
-    $configured = getenv('JSC_BINARY');
-    $finder = new ExecutableFinder;
-    $binary = null;
-
-    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
-        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
-            $binary = $candidate;
-            break;
-        }
-    }
-
-    if ($binary === null) {
-        $this->markTestSkipped('JavaScriptCore is unavailable.');
-    }
+    $binary = replayJavaScriptCorePath();
 
     $process = new Process([
         $binary,
@@ -819,20 +829,7 @@ it('executes player controls while ignoring an untrusted command origin', functi
 });
 
 it('turns player delivery failures and readiness timeouts into shell diagnostics', function (): void {
-    $configured = getenv('JSC_BINARY');
-    $finder = new ExecutableFinder;
-    $binary = null;
-
-    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
-        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
-            $binary = $candidate;
-            break;
-        }
-    }
-
-    if ($binary === null) {
-        $this->markTestSkipped('JavaScriptCore is unavailable.');
-    }
+    $binary = replayJavaScriptCorePath();
 
     $process = new Process([
         $binary,
@@ -853,20 +850,7 @@ it('turns player delivery failures and readiness timeouts into shell diagnostics
 });
 
 it('renders diagnostic player state visibly and sends it to the shell', function (): void {
-    $configured = getenv('JSC_BINARY');
-    $finder = new ExecutableFinder;
-    $binary = null;
-
-    foreach ([$configured, '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc', $finder->find('jsc')] as $candidate) {
-        if (is_string($candidate) && $candidate !== '' && is_executable($candidate)) {
-            $binary = $candidate;
-            break;
-        }
-    }
-
-    if ($binary === null) {
-        $this->markTestSkipped('JavaScriptCore is unavailable.');
-    }
+    $binary = replayJavaScriptCorePath();
 
     $process = new Process([
         $binary,

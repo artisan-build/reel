@@ -17,6 +17,8 @@ use Throwable;
 
 class SmokeCloudDeployment extends Command
 {
+    private const string SMOKE_QUEUE = 'reel-smoke';
+
     /** @var string */
     protected $signature = 'reel:smoke';
 
@@ -44,7 +46,9 @@ class SmokeCloudDeployment extends Command
         } finally {
             if ($disk instanceof FilesystemAdapter) {
                 try {
-                    $disk->delete($path);
+                    if (! $disk->delete($path)) {
+                        throw new RuntimeException('Object storage cleanup failed.');
+                    }
 
                     if ($disk->exists($path)) {
                         throw new RuntimeException('Object storage cleanup failed.');
@@ -101,11 +105,13 @@ class SmokeCloudDeployment extends Command
 
     private function verifyQueue(FilesystemAdapter $disk, string $path, string $probe, string $roundTrip): void
     {
-        dispatch(new CloudSmokeRoundTrip($path, $probe, $roundTrip, now()->addMinute()->getTimestamp()));
+        dispatch(new CloudSmokeRoundTrip($path, $probe, $roundTrip, now()->addMinute()->getTimestamp()))
+            ->onQueue(self::SMOKE_QUEUE);
 
         for ($attempt = 0; $attempt < 5 && $disk->get($path) !== $roundTrip; $attempt++) {
             Artisan::call('queue:work', [
                 'connection' => (string) config('queue.default'),
+                '--queue' => self::SMOKE_QUEUE,
                 '--once' => true,
                 '--sleep' => 0,
                 '--tries' => 1,

@@ -21,16 +21,25 @@ the S3 driver and the queue is non-inline; a failed smoke must block readiness.
 
 ## First administrator
 
-After the first successful migration, use Laravel Cloud's environment command runner to execute the existing
-interactive command:
+After the first successful migration, run the command locally from a Reel checkout bound to the target Laravel
+Cloud application. The prompts run in the local terminal; the command hashes the password locally and sends a
+non-interactive `--execute` command to the selected environment:
 
 ```bash
-php artisan create-admin
+php artisan create-admin --environment=<environment>
 ```
 
-Supply the first administrator's name, email, and a unique password through the command prompts. The command
-refuses to create another administrator once one exists; do not place a permanent bootstrap password or token
-in environment variables.
+Laravel Cloud's environment command runner is non-interactive, so never run bare `php artisan create-admin`
+there. If the local wrapper cannot be used, generate a bcrypt hash locally and run this complete form in the
+Cloud command runner:
+
+```bash
+php artisan create-admin --execute --email=<email> --name=<name> --password-hash=<bcrypt-hash> --no-interaction
+```
+
+Quote real values as required by the shell. Do not put the plaintext password, password hash, or a permanent
+bootstrap token in environment variables. The command refuses to create another administrator once one exists;
+`--force` is only for an intentional additional administrator.
 
 ## Create and enroll an application
 
