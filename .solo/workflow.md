@@ -9,13 +9,14 @@ profile the repository is the application scaffold and its quality gate only —
 ## Phase & mode
 - phase: pre-launch
 - default mode: A-autonomous
-- merge_policy: the coordinator merges autonomously, and only after ALL of:
-  1. the hard gate below is green on a clean, committed SHA;
-  2. an independent quality review and an independent acceptance judge both pass (see harness map —
-     different model lineages from the implementer); and
-  3. GitHub Actions CI is green on that SHA.
-  No human PR code review. Condition 3 is also enforced mechanically by branch protection on `main`
-  (see CI), so a red or missing check blocks the merge button regardless of coordinator behavior.
+- merge_policy: **merge on green** (Ed, 2026-08-21). The coordinator merges autonomously once BOTH:
+  1. the hard gate below is green on a clean, committed SHA; and
+  2. GitHub Actions CI is green on that SHA.
+  No human PR code review, and **no independent quality review / acceptance judge is required** — a
+  green gate + green CI is the bar. (The reviewer/judge roles in the harness map remain available if a
+  coordinator chooses to use them for a substantial change, but they no longer gate a merge.) Condition
+  2 is also enforced mechanically by branch protection on `main` (see CI), so a red or missing check
+  blocks the merge button regardless of coordinator behavior.
 - merge method: `gh pr merge --squash`
 
 ## Hard gate (must be green before review; coordinator verifies on the committed SHA, clean tree)
