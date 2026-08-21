@@ -35,7 +35,7 @@ class OrphanSweeper
 
             $remaining = array_values(array_filter(
                 $inventory['eligible_orphans'],
-                fn (string $object): bool => $disk->exists($object),
+                $disk->exists(...),
             ));
             DB::table('retention_states')->where('id', 1)->update([
                 'last_orphan_sweep_at' => now(),

@@ -24,6 +24,6 @@ class AdminRecordingDeletionController extends Controller
             return back()->withErrors(['retention' => 'recording_deletion_incomplete']);
         }
 
-        return redirect()->route('sessions.index')->with('retention_status', 'recording_deleted');
+        return to_route('sessions.index')->with('retention_status', 'recording_deleted');
     }
 }

@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
@@ -561,7 +562,7 @@ PHP);
         'PGAPPNAME' => 'reel-retention-race',
     ]);
     $process->start();
-    usleep(500_000);
+    Sleep::usleep(500_000);
     $waitType = $connection->table('pg_stat_activity')
         ->where('application_name', 'reel-retention-race')
         ->value('wait_event_type');

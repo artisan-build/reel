@@ -55,7 +55,7 @@ class RecordingDeletion
         try {
             $this->removePrefix($disk, $prefix);
             $remaining = $disk->allFiles($prefix);
-        } catch (Throwable $exception) {
+        } catch (Throwable) {
             $this->recordIncomplete($recordingSessionId, 'object_store_error', 0);
 
             return false;
