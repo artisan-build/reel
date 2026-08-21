@@ -35,15 +35,22 @@ final class Reel
 
     public function sessionsUrlForId(int|string|Stringable $id): string
     {
+        $normalized = self::normalizeUserId($id);
+
+        return $this->applicationSessionsUrl().'?'.http_build_query([
+            'user_id' => $normalized,
+        ], encoding_type: PHP_QUERY_RFC3986);
+    }
+
+    public static function normalizeUserId(int|string|Stringable $id): string
+    {
         $normalized = trim((string) $id);
 
         if ($normalized === '' || strlen($normalized) > 128 || preg_match('/[\x00-\x1F\x7F]/', $normalized)) {
             throw new InvalidArgumentException('A Reel user id must be a non-empty scalar of at most 128 bytes.');
         }
 
-        return $this->applicationSessionsUrl().'?'.http_build_query([
-            'user_id' => $normalized,
-        ], encoding_type: PHP_QUERY_RFC3986);
+        return $normalized;
     }
 
     private function applicationSessionsUrl(): string

@@ -236,6 +236,30 @@ namespace App\Models{
 namespace App\Models{
 /**
  * @property int $id
+ * @property int $recording_session_id
+ * @property int|null $actor_user_id
+ * @property string $actor_name
+ * @property string $action
+ * @property \Carbon\CarbonImmutable $occurred_at
+ * @property-read \App\Models\RecordingSession $recordingSession
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereAction($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorName($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorUserId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereOccurredAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereRecordingSessionId($value)
+ * @mixin \Eloquent
+ */
+	#[\AllowDynamicProperties]
+	class IdeHelperRecordingProtectionEvent {}
+}
+
+namespace App\Models{
+/**
+ * @property int $id
  * @property int $application_id
  * @property int $application_credential_id
  * @property string $session_id
@@ -284,6 +308,19 @@ namespace App\Models{
  * @property int|null $duration_seconds
  * @property \Carbon\CarbonImmutable|null $protected_at
  * @property int|null $protected_by
+ * @property \Carbon\CarbonImmutable|null $expires_at
+ * @property \Carbon\CarbonImmutable|null $delete_not_before
+ * @property \Carbon\CarbonImmutable|null $unprotected_at
+ * @property \Carbon\CarbonImmutable|null $deletion_started_at
+ * @property \Carbon\CarbonImmutable|null $deletion_completed_at
+ * @property int|null $deletion_actor_id
+ * @property string|null $deletion_reason
+ * @property int $deletion_attempts
+ * @property string|null $deletion_last_error
+ * @property int $deletion_remaining_objects
+ * @property string|null $erasure_batch_id
+ * @property \Carbon\CarbonImmutable|null $retention_skipped_at
+ * @property string|null $retention_skip_reason
  * @property-read \App\Models\Application $application
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingChunk> $chunks
  * @property-read int|null $chunks_count
@@ -292,6 +329,8 @@ namespace App\Models{
  * @property-read int|null $epochs_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingMarker> $markers
  * @property-read int|null $markers_count
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingProtectionEvent> $protectionEvents
+ * @property-read int|null $protection_events_count
  * @property-read \App\Models\User|null $protectionOwner
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ReplayView> $replayViews
  * @property-read int|null $replay_views_count
@@ -316,9 +355,19 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereConcurrentEpochCount($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereConflictingRetryCount($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeleteNotBefore($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionActorId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionAttempts($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionCompletedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionLastError($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionReason($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionRemainingObjects($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionStartedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDurationSeconds($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEndedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEpochCount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereErasureBatchId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereExpiresAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereFailureCode($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereGapCount($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereGrantIdHash($value)
@@ -343,10 +392,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtectedBy($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtocolVersion($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereReleaseId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkipReason($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkippedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereSessionId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStartedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStatusChangedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUnprotectedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUploadCutoffAt($value)
  * @mixin \Eloquent
@@ -447,5 +499,39 @@ namespace App\Models{
  */
 	#[\AllowDynamicProperties]
 	class IdeHelperUser {}
+}
+
+namespace App\Models{
+/**
+ * @property int $id
+ * @property string $batch_id
+ * @property int $actor_user_id
+ * @property string $actor_name
+ * @property int $application_id
+ * @property \Carbon\CarbonImmutable $requested_at
+ * @property \Carbon\CarbonImmutable|null $completed_at
+ * @property int $matched_count
+ * @property int $deleted_count
+ * @property int $failed_count
+ * @property string $outcome
+ * @property-read \App\Models\Application $application
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorName($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorUserId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereApplicationId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereBatchId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereCompletedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereDeletedCount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereFailedCount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereMatchedCount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereOutcome($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereRequestedAt($value)
+ * @mixin \Eloquent
+ */
+	#[\AllowDynamicProperties]
+	class IdeHelperUserErasureAudit {}
 }
 

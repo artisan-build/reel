@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\AdminRecordingDeletionController;
+use App\Http\Controllers\ApplicationUserErasureController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\RecordingProtectionController;
 use App\Http\Controllers\ReplayPlayerController;
 use App\Http\Controllers\ReplayPlayerUrlController;
 use App\Http\Controllers\ReplaySessionController;
@@ -12,7 +16,7 @@ use Illuminate\Support\Facades\Route;
 Route::view('/', 'welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function (): void {
-    Route::view('dashboard', 'dashboard')->name('dashboard');
+    Route::get('dashboard', DashboardController::class)->name('dashboard');
 
     Route::livewire('sessions', SessionIndex::class)->name('sessions.index');
     Route::livewire('applications/{application}/sessions', SessionIndex::class)
@@ -23,11 +27,19 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
         ->name('sessions.player-url');
     Route::get('applications/{application}/sessions/{recordingSession}/player', ReplayPlayerController::class)
         ->name('sessions.player');
+    Route::post('applications/{application}/sessions/{recordingSession}/protection', [RecordingProtectionController::class, 'store'])
+        ->name('sessions.protection.store');
+    Route::delete('applications/{application}/sessions/{recordingSession}/protection', [RecordingProtectionController::class, 'destroy'])
+        ->name('sessions.protection.destroy');
 
     Route::middleware('admin')->prefix('applications')->group(function (): void {
         Route::livewire('/', ApplicationIndex::class)->name('admin.applications.index');
         Route::livewire('create', CreateApplication::class)->name('admin.applications.create');
         Route::livewire('{application}', ShowApplication::class)->name('admin.applications.show');
+        Route::delete('{application}/sessions/{recordingSession}', AdminRecordingDeletionController::class)
+            ->name('admin.sessions.destroy');
+        Route::post('{application}/user-erasure', ApplicationUserErasureController::class)
+            ->name('admin.application-users.destroy');
     });
 });
 

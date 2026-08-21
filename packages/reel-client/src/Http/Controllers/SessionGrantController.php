@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace ArtisanBuild\ReelClient\Http\Controllers;
 
+use ArtisanBuild\ReelClient\Contracts\StableUserIdResolver;
 use ArtisanBuild\ReelClient\IssuedSessionSet;
 use ArtisanBuild\ReelClient\KeyMaterial;
+use ArtisanBuild\ReelClient\Reel;
 use ArtisanBuild\ReelClient\SessionGrant;
 use DateTimeImmutable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use InvalidArgumentException;
 use RuntimeException;
 
 final class SessionGrantController
@@ -43,6 +47,8 @@ final class SessionGrantController
             'max_compressed_bytes',
             'max_chunk_bytes',
         ]);
+        $applicationUserId = $this->applicationUserId($request);
+        $releaseId = $this->releaseId();
 
         /** @var array{max_chunks: int, max_compressed_bytes: int, max_chunk_bytes: int} $ceilings */
         $grant = SessionGrant::mint(
@@ -54,6 +60,8 @@ final class SessionGrantController
             $expiresAt,
             $maxEventTime,
             $ceilings,
+            applicationUserId: $applicationUserId,
+            releaseId: $releaseId,
         );
 
         $issuedSessions->add(
@@ -74,5 +82,36 @@ final class SessionGrantController
             'Cache-Control' => 'no-store, private',
             'Referrer-Policy' => 'no-referrer',
         ]);
+    }
+
+    private function applicationUserId(Request $request): ?string
+    {
+        $user = $request->user();
+        $id = $user instanceof Model
+            ? $user->getKey()
+            : (app()->bound(StableUserIdResolver::class)
+                ? resolve(StableUserIdResolver::class)->resolve($request, $user)
+                : null);
+
+        if (! is_int($id) && ! is_string($id) && ! $id instanceof \Stringable) {
+            return null;
+        }
+
+        return Reel::normalizeUserId($id);
+    }
+
+    private function releaseId(): ?string
+    {
+        $releaseId = trim((string) config('reel.release_id'));
+
+        if ($releaseId === '') {
+            return null;
+        }
+
+        if (strlen($releaseId) > 255 || preg_match('/[\x00-\x1F\x7F]/', $releaseId)) {
+            throw new InvalidArgumentException('The Reel release id must be at most 255 bytes without control characters.');
+        }
+
+        return $releaseId;
     }
 }

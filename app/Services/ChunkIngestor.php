@@ -47,6 +47,7 @@ class ChunkIngestor
         private readonly SessionGrantVerifier $grantVerifier,
         private readonly ChunkPrivacyValidator $privacyValidator,
         private readonly OperationalCounters $operationalCounters,
+        private readonly ObjectMutationLock $objectLocks,
     ) {}
 
     /** @param array<string, mixed> $envelope */
@@ -75,12 +76,16 @@ class ChunkIngestor
         $expiresAt = $claims->get('exp');
         $maxEventTime = $claims->get('max_event_time');
         $grantId = $claims->get('jti');
+        $applicationUserId = $claims->get('application_user_id');
+        $releaseId = $claims->get('release_id');
 
         if (! is_array($ceilings)
             || ! $issuedAt instanceof DateTimeInterface
             || ! $expiresAt instanceof DateTimeInterface
             || ! is_int($maxEventTime)
-            || ! is_string($grantId)) {
+            || ! is_string($grantId)
+            || (! is_string($applicationUserId) && $applicationUserId !== null)
+            || (! is_string($releaseId) && $releaseId !== null)) {
             $this->reject('invalid_grant_claims', 401);
         }
 
@@ -118,6 +123,8 @@ class ChunkIngestor
                 $issuedAt,
                 $expiresAt,
                 $maxEventTime,
+                $applicationUserId,
+                $releaseId,
                 $rejection->reason,
             );
 
@@ -139,6 +146,8 @@ class ChunkIngestor
                 $issuedAt,
                 $expiresAt,
                 $maxEventTime,
+                $applicationUserId,
+                $releaseId,
                 $events,
             );
         } catch (IngestRejected $rejection) {
@@ -417,6 +426,8 @@ class ChunkIngestor
         DateTimeInterface $issuedAt,
         DateTimeInterface $expiresAt,
         int $maxEventTime,
+        ?string $applicationUserId,
+        ?string $releaseId,
         array $events,
     ): ChunkIngestResult {
         return DB::transaction(function () use (
@@ -431,6 +442,8 @@ class ChunkIngestor
             $issuedAt,
             $expiresAt,
             $maxEventTime,
+            $applicationUserId,
+            $releaseId,
             $events,
         ): ChunkIngestResult {
             $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
@@ -469,9 +482,21 @@ class ChunkIngestor
                     $issuedAt,
                     $expiresAt,
                     $maxEventTime,
+                    $applicationUserId,
+                    $releaseId,
                 );
             } else {
-                $this->assertSessionBinding($session, $lockedCredential, $origin, $grantId, $ceilings, $maxEventTime, $expiresAt);
+                $this->assertSessionBinding(
+                    $session,
+                    $lockedCredential,
+                    $origin,
+                    $grantId,
+                    $ceilings,
+                    $maxEventTime,
+                    $expiresAt,
+                    $applicationUserId,
+                    $releaseId,
+                );
             }
 
             $wasRecording = $session->status === RecordingSessionStatus::Recording;
@@ -567,6 +592,7 @@ class ChunkIngestor
             $reorderDistance = max(0, $envelope['sequence'] - $expectedSequence);
 
             $objectKey = $this->objectKey($lockedApplication, $session, $envelope);
+            $this->objectLocks->acquireForTransaction($objectKey);
             $disk = Storage::disk((string) config('filesystems.default'));
 
             if (! $disk->put($objectKey, $compressed)) {
@@ -642,6 +668,8 @@ class ChunkIngestor
         DateTimeInterface $issuedAt,
         DateTimeInterface $expiresAt,
         int $maxEventTime,
+        ?string $applicationUserId,
+        ?string $releaseId,
     ): RecordingSession {
         $session = new RecordingSession;
         $session->fill([
@@ -659,6 +687,12 @@ class ChunkIngestor
             'upload_cutoff_at' => $expiresAt,
             'maximum_expires_at' => $issuedAt->getTimestamp()
                 + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'expires_at' => $issuedAt->getTimestamp()
+                + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'delete_not_before' => $issuedAt->getTimestamp()
+                + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'application_user_id' => $applicationUserId,
+            'release_id' => $releaseId,
             'status_changed_at' => now(),
         ]);
         $session->status = RecordingSessionStatus::Recording;
@@ -787,6 +821,8 @@ class ChunkIngestor
         DateTimeInterface $issuedAt,
         DateTimeInterface $expiresAt,
         int $maxEventTime,
+        ?string $applicationUserId,
+        ?string $releaseId,
         string $reason,
     ): void {
         DB::transaction(function () use (
@@ -799,6 +835,8 @@ class ChunkIngestor
             $issuedAt,
             $expiresAt,
             $maxEventTime,
+            $applicationUserId,
+            $releaseId,
             $reason,
         ): void {
             $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
@@ -832,6 +870,8 @@ class ChunkIngestor
                     $issuedAt,
                     $expiresAt,
                     $maxEventTime,
+                    $applicationUserId,
+                    $releaseId,
                 );
             }
 
@@ -852,6 +892,8 @@ class ChunkIngestor
         array $ceilings,
         int $maxEventTime,
         DateTimeInterface $expiresAt,
+        ?string $applicationUserId,
+        ?string $releaseId,
     ): void {
         if ($session->application_credential_id !== $credential->getKey()
             || ! hash_equals($session->grant_id_hash, hash('sha256', $grantId))
@@ -860,7 +902,9 @@ class ChunkIngestor
             || $session->max_compressed_bytes !== $ceilings['max_compressed_bytes']
             || $session->max_chunk_bytes !== $ceilings['max_chunk_bytes']
             || $session->max_event_time->getTimestamp() !== $maxEventTime
-            || $session->upload_cutoff_at->getTimestamp() > $expiresAt->getTimestamp()) {
+            || $session->upload_cutoff_at->getTimestamp() > $expiresAt->getTimestamp()
+            || $session->application_user_id !== $applicationUserId
+            || $session->release_id !== $releaseId) {
             $this->reject('session_grant_conflict', 409);
         }
     }

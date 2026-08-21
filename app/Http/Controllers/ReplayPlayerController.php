@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\RecordingSessionStatus;
+use App\Events\ReplayPayloadRead;
 use App\Models\Application;
+use App\Models\RecordingSession;
 use App\Models\ReplayView;
 use App\Services\ReplayPayload;
 use App\Services\ReplayPayloadReader;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use JsonException;
 use RuntimeException;
 
@@ -33,6 +37,33 @@ class ReplayPlayerController extends Controller
             : ReplayPayload::diagnostic('delivery_link_invalid');
         $status = $validSignature ? 200 : 403;
 
+        if ($payload->diagnostic === null) {
+            event(new ReplayPayloadRead($session->getKey()));
+            $deliverable = DB::transaction(function () use ($application, $request, $session): bool {
+                $locked = RecordingSession::query()
+                    ->where('application_id', $application->getKey())
+                    ->lockForUpdate()
+                    ->find($session->getKey());
+
+                if (! $locked instanceof RecordingSession || $locked->status !== RecordingSessionStatus::Ready) {
+                    return false;
+                }
+
+                ReplayView::query()->create([
+                    'user_id' => $request->user()->getAuthIdentifier(),
+                    'application_id' => $application->getKey(),
+                    'recording_session_id' => $locked->getKey(),
+                    'viewed_at' => now(),
+                ]);
+
+                return true;
+            }, 3);
+
+            if (! $deliverable) {
+                $payload = ReplayPayload::diagnostic('replay_deletion_started');
+            }
+        }
+
         $scriptNonce = bin2hex(random_bytes(24));
         $playerRuntime = $this->readFile(resource_path('js/replay-player.js'));
         $messageRuntime = $this->readFile(public_path('build/assets/replay-message-channel.js'));
@@ -48,15 +79,6 @@ class ReplayPlayerController extends Controller
         ]);
         $events = $this->encodeJson($payload->events);
         $csp = "default-src 'none'; script-src 'nonce-{$scriptNonce}'; style-src 'unsafe-inline'";
-
-        if ($payload->diagnostic === null) {
-            ReplayView::query()->create([
-                'user_id' => $request->user()->getAuthIdentifier(),
-                'application_id' => $application->getKey(),
-                'recording_session_id' => $session->getKey(),
-                'viewed_at' => now(),
-            ]);
-        }
 
         return response()->view('replay-player', compact(
             'configuration',

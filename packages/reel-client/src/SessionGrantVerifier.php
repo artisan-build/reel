@@ -48,6 +48,8 @@ final readonly class SessionGrantVerifier
                 new HasClaim('protocol_version'),
                 new HasClaim('max_event_time'),
                 new HasClaim('ceilings'),
+                new HasClaim('application_user_id'),
+                new HasClaim('release_id'),
             );
 
             if (! $valid) {
@@ -74,6 +76,8 @@ final readonly class SessionGrantVerifier
         $maxEventTime = $claims->get('max_event_time');
         $grantId = $claims->get('jti');
         $sessionId = $claims->get('session_id');
+        $applicationUserId = $claims->get('application_user_id');
+        $releaseId = $claims->get('release_id');
 
         if ($claims->get('application_id') !== $context->applicationId
             || $claims->get('credential_id') !== $context->credentialId
@@ -85,6 +89,11 @@ final readonly class SessionGrantVerifier
             || $grantId === ''
             || strlen($grantId) > 128) {
             throw new DomainException('The Reel grant binding is invalid.');
+        }
+
+        if (! $this->isOptionalMetadata($applicationUserId, 128)
+            || ! $this->isOptionalMetadata($releaseId, 255)) {
+            throw new DomainException('The Reel grant metadata is invalid.');
         }
 
         if (! $issuedAt instanceof DateTimeInterface
@@ -118,5 +127,14 @@ final readonly class SessionGrantVerifier
                 throw new DomainException('The Reel grant ceilings are invalid.');
             }
         }
+    }
+
+    private function isOptionalMetadata(mixed $value, int $maximumBytes): bool
+    {
+        return $value === null
+            || (is_string($value)
+                && $value !== ''
+                && strlen($value) <= $maximumBytes
+                && preg_match('/[\x00-\x1F\x7F]/', $value) !== 1);
     }
 }

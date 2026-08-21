@@ -50,6 +50,9 @@ use Illuminate\Support\Facades\DB;
     'duration_seconds',
     'protected_at',
     'protected_by',
+    'expires_at',
+    'delete_not_before',
+    'unprotected_at',
 ])]
 class RecordingSession extends Model
 {
@@ -93,6 +96,12 @@ class RecordingSession extends Model
     public function replayViews(): HasMany
     {
         return $this->hasMany(ReplayView::class);
+    }
+
+    /** @return HasMany<RecordingProtectionEvent, $this> */
+    public function protectionEvents(): HasMany
+    {
+        return $this->hasMany(RecordingProtectionEvent::class);
     }
 
     /** @return BelongsTo<User, $this> */
@@ -193,6 +202,12 @@ class RecordingSession extends Model
             'latest_path_recorded_at' => 'integer',
             'duration_seconds' => 'integer',
             'protected_at' => 'immutable_datetime',
+            'expires_at' => 'immutable_datetime',
+            'delete_not_before' => 'immutable_datetime',
+            'unprotected_at' => 'immutable_datetime',
+            'deletion_started_at' => 'immutable_datetime',
+            'deletion_completed_at' => 'immutable_datetime',
+            'retention_skipped_at' => 'immutable_datetime',
         ];
     }
 }

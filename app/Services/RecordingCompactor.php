@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\RecordingSessionStatus;
 use App\Events\CompactionCandidateVerified;
 use App\Events\CompactionCandidateWritten;
+use App\Events\CompactionPrefixLocked;
 use App\Events\CompactionPublished;
 use App\Jobs\CleanupCompactionCandidate;
 use App\Models\RecordingChunk;
@@ -24,6 +25,7 @@ class RecordingCompactor
     public function __construct(
         private readonly ReplayManifest $manifestReader,
         private readonly OperationalCounters $counters,
+        private readonly ObjectMutationLock $locks,
     ) {}
 
     public function compact(int $recordingSessionId): void
@@ -54,6 +56,10 @@ class RecordingCompactor
                 return $locked->fresh(['application']);
             }
 
+            if (in_array($locked->status, [RecordingSessionStatus::Deleting, RecordingSessionStatus::Deleted], true)) {
+                $this->counters->increment('post_delete_publish_preventions');
+            }
+
             return null;
         });
 
@@ -61,7 +67,28 @@ class RecordingCompactor
             return;
         }
 
+        $prefixLock = implode('/', [
+            trim((string) config('reel_ingest.object_prefix'), '/'),
+            $session->application->public_id,
+            $session->session_id,
+        ]);
+        $this->locks->acquire($prefixLock);
+
         try {
+            event(new CompactionPrefixLocked($recordingSessionId));
+            $currentStatus = RecordingSession::query()->whereKey($recordingSessionId)->value('status');
+            $currentStatus = $currentStatus instanceof RecordingSessionStatus
+                ? $currentStatus
+                : RecordingSessionStatus::tryFrom((string) $currentStatus);
+
+            if ($currentStatus !== $session->status) {
+                if ($currentStatus === RecordingSessionStatus::Deleting) {
+                    $this->counters->increment('post_delete_publish_preventions');
+                }
+
+                return;
+            }
+
             $disk = Storage::disk($diskName);
 
             if ($session->status === RecordingSessionStatus::Ready) {
@@ -180,6 +207,7 @@ class RecordingCompactor
 
             throw $exception;
         } finally {
+            $this->locks->release($prefixLock);
             $durationMs = max(1, (int) ((hrtime(true) - $startedAt) / 1_000_000));
             $peakMemoryBytes = memory_get_peak_usage(true);
             RecordingSession::query()

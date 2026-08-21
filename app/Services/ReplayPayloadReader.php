@@ -20,6 +20,10 @@ class ReplayPayloadReader
 
     public function read(RecordingSession $session): ReplayPayload
     {
+        if (in_array($session->status, [RecordingSessionStatus::Deleting, RecordingSessionStatus::Deleted], true)) {
+            return ReplayPayload::diagnostic('replay_deletion_started');
+        }
+
         if ($session->status !== RecordingSessionStatus::Ready
             || ! is_array($session->manifest)
             || ! is_string($session->manifest_checksum)) {

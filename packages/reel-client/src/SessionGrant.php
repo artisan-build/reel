@@ -33,6 +33,8 @@ final class SessionGrant
         DateTimeImmutable $maxEventTime,
         array $ceilings,
         ?string $grantId = null,
+        ?string $applicationUserId = null,
+        ?string $releaseId = null,
     ): string {
         $publicKey = KeyMaterial::publicKeyFromPrivate($privateKey);
         $configuration = Configuration::forAsymmetricSigner(
@@ -56,6 +58,8 @@ final class SessionGrant
             ->withClaim('protocol_version', Envelope::VERSION)
             ->withClaim('max_event_time', $maxEventTime->getTimestamp())
             ->withClaim('ceilings', $ceilings)
+            ->withClaim('application_user_id', $applicationUserId)
+            ->withClaim('release_id', $releaseId)
             ->getToken($configuration->signer(), $configuration->signingKey())
             ->toString();
     }

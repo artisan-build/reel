@@ -6,6 +6,7 @@ use App\Enums\RecordingEpochStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Events\CompactionCandidateVerified;
 use App\Events\CompactionCandidateWritten;
+use App\Events\CompactionPrefixLocked;
 use App\Events\CompactionPublished;
 use App\Jobs\CleanupCompactionCandidate;
 use App\Jobs\CompactRecordingSession;
@@ -16,6 +17,7 @@ use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
 use App\Services\OperationalCounters;
 use App\Services\RecordingCompactor;
+use App\Services\RecordingDeletion;
 use App\Services\ReplayManifest;
 use App\Services\SessionFinalizer;
 use ArtisanBuild\ReelClient\Envelope;
@@ -314,6 +316,48 @@ it('retains temporary chunks and schedules exact candidate cleanup when deletion
         CleanupCompactionCandidate::class,
         fn (CleanupCompactionCandidate $job): bool => $job->candidateKey === $candidateKey && $job->disk === 'local',
     );
+
+    expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'finish_concurrent_deletion'))->toBeTrue()
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted);
+    expect(Storage::disk('local')->allFiles(resolve(RecordingDeletion::class)->prefix($session->fresh(['application']))))->toBe([]);
+});
+
+it('rechecks terminal state after acquiring the prefix lock before writing any candidate', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture();
+    $lockQueries = [];
+    DB::listen(function (QueryExecuted $query) use (&$lockQueries): void {
+        if (str_contains(strtolower($query->sql), 'pg_advisory_lock')) {
+            $lockQueries[] = $query->sql;
+        }
+    });
+    Event::listen(CompactionPrefixLocked::class, function (CompactionPrefixLocked $event): void {
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Deleting, 'deletion_won_prefix_lock');
+    });
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    $session->refresh();
+    expect($session->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and($session->manifest)->toBeNull()
+        ->and($lockQueries)->not->toBeEmpty()
+        ->and(Storage::disk('local')->allFiles())
+        ->toBe([$session->chunks()->sole()->object_key]);
+    Queue::assertNothingPushed();
+});
+
+it('counts compaction attempts prevented by both deleting and deleted terminal states', function (): void {
+    $session = createCompactionFixture(status: RecordingSessionStatus::Deleting);
+    $compactor = resolve(RecordingCompactor::class);
+
+    $compactor->compact($session->getKey());
+    $session->transitionTo(RecordingSessionStatus::Deleted, 'deletion_completed_for_counter');
+    $compactor->compact($session->getKey());
+
+    expect(DB::table('operational_counters')
+        ->where('metric', 'post_delete_publish_preventions')
+        ->value('value'))->toBe(2);
 });
 
 it('blocks publication after a concurrent transition to failed', function (): void {
