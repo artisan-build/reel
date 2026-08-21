@@ -129,7 +129,7 @@ it('rejects an id issued to a genuinely different visitor session', function ():
     $visitorB = new Store('reel-session', $handler, 'visitor-b-session');
     $visitorA->start();
     $visitorB->start();
-    app(IssuedSessionSet::class)->add($visitorA, $sessionId, time() + 300, 8, '/visitor-a');
+    resolve(IssuedSessionSet::class)->add($visitorA, $sessionId, time() + 300, 8, '/visitor-a');
     $visitorA->save();
     expect($visitorA->getId())->not->toBe($visitorB->getId())
         ->and($visitorA->get('reel.issued_sessions'))->toHaveKey($sessionId)
@@ -140,10 +140,10 @@ it('rejects an id issued to a genuinely different visitor session', function ():
         'HTTP_X_REEL_SESSION' => $sessionId,
     ]);
     $request->setLaravelSession($visitorB);
-    $correlate = app(CorrelateReelRequest::class);
+    $correlate = resolve(CorrelateReelRequest::class);
     $observed = [];
 
-    $response = app(RedactReelHeaders::class)->handle(
+    $response = resolve(RedactReelHeaders::class)->handle(
         $request,
         function (Request $request) use ($correlate, &$observed) {
             return $correlate->handle($request, function (Request $request) use (&$observed) {
