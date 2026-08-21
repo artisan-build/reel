@@ -53,7 +53,7 @@ class UserErasure
                 ->whereKey($sessions->modelKeys())
                 ->update(['erasure_batch_id' => $batchId, 'updated_at' => now()]);
 
-            DeleteUserErasureBatch::dispatch($batchId)->afterCommit();
+            dispatch(new DeleteUserErasureBatch($batchId))->afterCommit();
 
             return $audit;
         }, 3);

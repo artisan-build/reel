@@ -34,7 +34,7 @@ class ResumeUserErasures extends Command
         }
 
         foreach ($batchIds as $batchId) {
-            DeleteUserErasureBatch::dispatch((string) $batchId);
+            dispatch(new DeleteUserErasureBatch((string) $batchId));
         }
 
         $this->components->info("Dispatched {$batchIds->count()} erasure batches.");

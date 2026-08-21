@@ -90,7 +90,7 @@ final class SessionGrantController
         $id = $user instanceof Model
             ? $user->getKey()
             : (app()->bound(StableUserIdResolver::class)
-                ? app(StableUserIdResolver::class)->resolve($request, $user)
+                ? resolve(StableUserIdResolver::class)->resolve($request, $user)
                 : null);
 
         if (! is_int($id) && ! is_string($id) && ! $id instanceof \Stringable) {

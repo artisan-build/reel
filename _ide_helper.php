@@ -24484,6 +24484,14 @@ namespace ArtisanBuild\ReelClient\Facades {
             return $instance->sessionsUrlForId($id);
         }
 
+        /**
+         * @static
+         */
+        public static function normalizeUserId($id)
+        {
+            return \ArtisanBuild\ReelClient\Reel::normalizeUserId($id);
+        }
+
             }
     }
 

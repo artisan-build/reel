@@ -318,6 +318,9 @@ namespace App\Models{
  * @property int $deletion_attempts
  * @property string|null $deletion_last_error
  * @property int $deletion_remaining_objects
+ * @property string|null $erasure_batch_id
+ * @property \Carbon\CarbonImmutable|null $retention_skipped_at
+ * @property string|null $retention_skip_reason
  * @property-read \App\Models\Application $application
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingChunk> $chunks
  * @property-read int|null $chunks_count
@@ -363,6 +366,7 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDurationSeconds($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEndedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEpochCount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereErasureBatchId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereExpiresAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereFailureCode($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereGapCount($value)
@@ -388,6 +392,8 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtectedBy($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtocolVersion($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereReleaseId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkipReason($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkippedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereSessionId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStartedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStatus($value)
