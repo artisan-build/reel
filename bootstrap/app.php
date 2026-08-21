@@ -8,6 +8,7 @@ use App\Console\Commands\ReconcileRecordingStorage;
 use App\Console\Commands\ResumeUserErasures;
 use App\Console\Commands\RetainRecordingSessions;
 use App\Console\Commands\RetryRecordingDeletions;
+use App\Console\Commands\SmokeCloudDeployment;
 use App\Console\Commands\SweepRecordingOrphans;
 use App\Http\Middleware\EnsureUserIsAdministrator;
 use Illuminate\Foundation\Application;
@@ -30,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
         RetainRecordingSessions::class,
         ResumeUserErasures::class,
         RetryRecordingDeletions::class,
+        SmokeCloudDeployment::class,
         SweepRecordingOrphans::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
