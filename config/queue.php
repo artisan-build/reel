@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'default' => env('QUEUE_CONNECTION', 'database'),
+    'default' => env('QUEUE_CONNECTION'),
 
     /*
     |--------------------------------------------------------------------------
@@ -38,9 +38,9 @@ return [
         'database' => [
             'driver' => 'database',
             'connection' => env('DB_QUEUE_CONNECTION'),
-            'table' => env('DB_QUEUE_TABLE', 'jobs'),
-            'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            'table' => 'jobs',
+            'queue' => 'default',
+            'retry_after' => 90,
             'after_commit' => false,
         ],
 
@@ -66,9 +66,9 @@ return [
 
         'redis' => [
             'driver' => 'redis',
-            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
-            'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            'connection' => env('REDIS_QUEUE_CONNECTION'),
+            'queue' => env('REDIS_QUEUE'),
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER'),
             'block_for' => null,
             'after_commit' => false,
         ],
@@ -103,7 +103,7 @@ return [
     */
 
     'batching' => [
-        'database' => env('DB_CONNECTION', 'sqlite'),
+        'database' => env('DB_CONNECTION'),
         'table' => 'job_batches',
     ],
 
@@ -122,7 +122,7 @@ return [
 
     'failed' => [
         'driver' => env('QUEUE_FAILED_DRIVER', 'database-uuids'),
-        'database' => env('DB_CONNECTION', 'sqlite'),
+        'database' => env('DB_CONNECTION'),
         'table' => 'failed_jobs',
     ],
 

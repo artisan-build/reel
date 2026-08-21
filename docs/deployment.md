@@ -16,7 +16,8 @@ The local `.env.example` is not deployment configuration: never copy it or run `
 
 The manifest installs production dependencies and optimizes the app during build. Post-deploy, it runs
 `php artisan migrate --force` followed by `php artisan reel:smoke`. The smoke command uses the configured
-database, default private disk, queue, and scheduler. A failed smoke must block readiness.
+database, default private disk, queue, and scheduler. It refuses to report ready unless the resolved disk uses
+the S3 driver and the queue is non-inline; a failed smoke must block readiness.
 
 ## First administrator
 

@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 use App\Jobs\CloudSmokeRoundTrip;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\Finder\Finder;
 use Symfony\Component\Process\Process;
 
 function cloudManifest(): array
@@ -19,7 +21,8 @@ function cloudManifest(): array
 
 it('keeps the catalog manifest aligned with live application configuration and scheduler registration', function (): void {
     $manifest = cloudManifest();
-    $resources = collect($manifest['resources'])->keyBy('id');
+    $resourceList = $manifest['resources'];
+    $resources = collect($resourceList)->keyBy('id');
     $liveDrivers = [
         'database' => config('database.connections.pgsql.driver'),
         'object_storage' => config('filesystems.disks.s3.driver'),
@@ -42,7 +45,8 @@ it('keeps the catalog manifest aligned with live application configuration and s
         'state' => 'experimental',
         'limitations' => 'docs/limitations.md',
     ])->and($manifest['description'])->toBeString()->not->toBeEmpty()
-        ->and($resources->keys()->all())->toBe([
+        ->and($resourceList)->toHaveCount(5)
+        ->and(array_column($resourceList, 'id'))->toBe([
             'application',
             'database',
             'object_storage',
@@ -75,7 +79,8 @@ it('never deploys configuration that shadows Cloud managed resource values', fun
             || str_starts_with($path, '.github/workflows/')
             || preg_match('/(^|\/)(Dockerfile|Procfile|\.env\.(production|cloud))$/', $path) === 1)
         ->mapWithKeys(fn (string $path): array => [$path => file_get_contents(base_path($path))]);
-    $assignment = '/(?m)^\s*(?:(?:export\s+)?(?:DB_CONNECTION|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+)\s*(?:=|:)|[\'\"](?:DB_CONNECTION|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+)[\'\"]\s*:)\s*\S+/';
+    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|SESSION_DRIVER|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_[A-Z0-9_]+)';
+    $assignment = "/(?m)^\\s*(?:(?:export\\s+)?{$managedVariable}\\s*(?:=|:)|['\"]{$managedVariable}['\"]\\s*:)\\s*\\S+/";
 
     expect($deployedConfiguration)->not->toBeEmpty();
 
@@ -83,23 +88,32 @@ it('never deploys configuration that shadows Cloud managed resource values', fun
         expect($contents)->not->toMatch($assignment, "Cloud-managed value is assigned in {$path}");
     }
 
-    $productionDefaults = [
-        [base_path('config/database.php'), 'DB_CONNECTION', 'pgsql'],
-        [base_path('config/queue.php'), 'QUEUE_CONNECTION', 'sqs'],
-        [base_path('config/filesystems.php'), 'FILESYSTEM_DISK', 's3'],
-    ];
+    foreach (glob(base_path('config/*.php')) ?: [] as $path) {
+        $contents = file_get_contents($path);
+        preg_match_all("/env\\(\\s*['\"](?<variable>{$managedVariable})['\"]\\s*,/", $contents, $matches);
 
-    foreach ($productionDefaults as [$path, $variable, $value]) {
-        expect(file_get_contents($path))->not->toMatch(
-            "/env\\(\\s*['\"]{$variable}['\"]\\s*,\\s*['\"]{$value}['\"]\\s*\\)/",
-        );
+        foreach ($matches['variable'] as $variable) {
+            expect($variable)->toBeNull("Cloud-managed variable {$variable} has a fallback in {$path}");
+        }
     }
 
-    foreach (glob(base_path('config/*.php')) ?: [] as $path) {
-        expect(file_get_contents($path))->not->toMatch(
-            '/env\(\s*[\'\"](?:AWS_|SQS_)[A-Z0-9_]+[\'\"]\s*,/',
-            "Cloud-managed AWS/SQS value has a fallback in {$path}",
-        );
+    $runtimeKey = '(?:database|queue|cache|filesystems)\.[A-Za-z0-9_.-]+|session\.driver';
+
+    foreach ((new Finder)->files()->in(app_path())->name('*.php') as $file) {
+        $contents = $file->getContents();
+        $patterns = [
+            "/config\\(\\s*\\[\\s*['\"](?<key>{$runtimeKey})['\"]\\s*=>/",
+            "/config\\(\\s*\\)\\s*->set\\(\\s*['\"](?<key>{$runtimeKey})['\"]/",
+            "/Config::set\\(\\s*['\"](?<key>{$runtimeKey})['\"]/",
+        ];
+
+        foreach ($patterns as $pattern) {
+            preg_match_all($pattern, $contents, $matches);
+
+            foreach ($matches['key'] as $key) {
+                expect($key)->toBeNull("Runtime config key {$key} is shadowed in {$file->getRealPath()}");
+            }
+        }
     }
 });
 
@@ -131,7 +145,7 @@ it('ships both Cloud storage and queue drivers as runtime dependencies', functio
 it('runs the configured queue and removes its object storage probe', function (): void {
     config()->set('filesystems.default', 'smoke');
     config()->set('queue.default', 'database');
-    Storage::fake('smoke');
+    Storage::fake('smoke', ['driver' => 's3']);
 
     $this->artisan('reel:smoke')
         ->assertSuccessful()
@@ -142,7 +156,8 @@ it('runs the configured queue and removes its object storage probe', function ()
 
 it('fails readiness when the database has a pending migration', function (): void {
     config()->set('filesystems.default', 'smoke-pending-migration');
-    Storage::fake('smoke-pending-migration');
+    config()->set('queue.default', 'database');
+    Storage::fake('smoke-pending-migration', ['driver' => 's3']);
     DB::table('migrations')->where('migration', '2026_08_21_000001_harden_retention_concurrency')->delete();
 
     $this->artisan('reel:smoke')
@@ -151,36 +166,50 @@ it('fails readiness when the database has a pending migration', function (): voi
 });
 
 it('fails on an unwritable disk and still leaves no scratch object', function (): void {
-    $root = storage_path('framework/testing/reel-smoke-unwritable');
-    file_put_contents($root, 'not a directory');
     config()->set('filesystems.default', 'unwritable');
-    config()->set('filesystems.disks.unwritable', [
-        'driver' => 'local',
-        'root' => $root,
-        'throw' => false,
-    ]);
+    config()->set('queue.default', 'database');
+    $disk = Mockery::mock(FilesystemAdapter::class);
+    $disk->shouldReceive('getConfig')->once()->andReturn(['driver' => 's3']);
+    $disk->shouldReceive('put')->once()->andReturnFalse();
+    $disk->shouldReceive('delete')->once()->andReturnTrue();
+    $disk->shouldReceive('exists')->once()->andReturnFalse();
+    Storage::set('unwritable', $disk);
 
-    try {
-        $this->artisan('reel:smoke')
-            ->assertFailed()
-            ->expectsOutputToContain('Unable to create a directory');
-
-        expect(glob($root.'/reel/smoke/*') ?: [])->toBe([]);
-    } finally {
-        unlink($root);
-    }
+    $this->artisan('reel:smoke')
+        ->assertFailed()
+        ->expectsOutputToContain('Object storage is not writable and readable.');
 });
 
 it('removes the storage probe when a later readiness check fails', function (): void {
     config()->set('filesystems.default', 'smoke-later-failure');
     config()->set('queue.default', 'missing-smoke-connection');
-    Storage::fake('smoke-later-failure');
+    Storage::fake('smoke-later-failure', ['driver' => 's3']);
 
     $this->artisan('reel:smoke')
         ->assertFailed()
         ->expectsOutputToContain('The [missing-smoke-connection] queue connection has not been configured.');
 
     expect(Storage::disk('smoke-later-failure')->allFiles('reel/smoke'))->toBe([]);
+});
+
+it('rejects a local filesystem before reporting Cloud readiness', function (): void {
+    config()->set('filesystems.default', 'smoke-local');
+    config()->set('queue.default', 'database');
+    Storage::fake('smoke-local', ['driver' => 'local']);
+
+    $this->artisan('reel:smoke')
+        ->assertFailed()
+        ->expectsOutputToContain('The configured filesystem driver [local] is not S3-backed.');
+});
+
+it('rejects an inline queue before reporting Cloud readiness', function (): void {
+    config()->set('filesystems.default', 'smoke-inline-queue');
+    config()->set('queue.default', 'sync');
+    Storage::fake('smoke-inline-queue', ['driver' => 's3']);
+
+    $this->artisan('reel:smoke')
+        ->assertFailed()
+        ->expectsOutputToContain('The configured queue driver [sync] is inline.');
 });
 
 it('does not let a delayed smoke job recreate a cleaned probe', function (): void {

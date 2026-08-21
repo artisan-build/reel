@@ -5,8 +5,10 @@ namespace App\Console\Commands;
 use App\Jobs\CloudSmokeRoundTrip;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Queue\SyncQueue;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -31,6 +33,7 @@ class SmokeCloudDeployment extends Command
 
         try {
             $disk = Storage::disk((string) config('filesystems.default'));
+            $this->verifyCloudDrivers($disk);
             $this->verifyDatabase();
             $this->verifyStorage($disk, $path, $probe);
             $this->verifyQueue($disk, $path, $probe, $roundTrip);
@@ -70,6 +73,23 @@ class SmokeCloudDeployment extends Command
             throw new RuntimeException('The database has pending migrations.');
         }
 
+    }
+
+    private function verifyCloudDrivers(FilesystemAdapter $disk): void
+    {
+        $filesystemDriver = (string) ($disk->getConfig()['driver'] ?? 'unknown');
+
+        if ($filesystemDriver !== 's3') {
+            throw new RuntimeException("The configured filesystem driver [{$filesystemDriver}] is not S3-backed. Attach Laravel Object Storage and remove any FILESYSTEM_DISK override.");
+        }
+
+        $queueConnection = (string) config('queue.default');
+        $queueDriver = (string) config("queue.connections.{$queueConnection}.driver", 'unknown');
+        $queue = Queue::connection($queueConnection);
+
+        if ($queue instanceof SyncQueue || in_array($queueDriver, ['sync', 'deferred', 'background', 'null'], true)) {
+            throw new RuntimeException("The configured queue driver [{$queueDriver}] is inline. Attach a managed queue and remove any QUEUE_CONNECTION override.");
+        }
     }
 
     private function verifyStorage(FilesystemAdapter $disk, string $path, string $probe): void
