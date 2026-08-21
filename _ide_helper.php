@@ -24451,6 +24451,24 @@ namespace ArtisanBuild\ReelClient\Facades {
         /**
          * @static
          */
+        public static function sessionUrl($sessionId)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->sessionUrl($sessionId);
+        }
+
+        /**
+         * @static
+         */
+        public static function candidateSessionsUrl($startedFrom, $startedTo, $path)
+        {
+            /** @var \ArtisanBuild\ReelClient\Reel $instance */
+            return $instance->candidateSessionsUrl($startedFrom, $startedTo, $path);
+        }
+
+        /**
+         * @static
+         */
         public static function sessionsUrlFor($model)
         {
             /** @var \ArtisanBuild\ReelClient\Reel $instance */

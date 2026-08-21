@@ -48,6 +48,7 @@ it('generates the private key locally and enrolls only the public key', function
     expect($written)->toContain("APP_NAME=Fixture\r\n# untouched comment\r\nCUSTOM_VALUE='byte exact'\r\n")
         ->and($written)->toContain('REEL_URL="https://reel.example"')
         ->and($written)->toContain('REEL_APPLICATION_ID="app-public-id"')
+        ->and($written)->toContain('REEL_CONTEXT_EXPORT="off"')
         ->and($written)->not->toContain('BEGIN PRIVATE KEY');
 
     preg_match('/^REEL_PRIVATE_KEY="([^"]+)"\r?$/m', $written, $matches);
@@ -72,6 +73,30 @@ it('does not install a private key when enrollment fails', function (): void {
     ])->assertFailed();
 
     expect(file_get_contents($directory.'/.env'))->toBe("UNCHANGED=yes\n");
+
+    unlink($directory.'/.env');
+    rmdir($directory);
+});
+
+it('discloses the configured observability destination during interactive install', function (): void {
+    $directory = sys_get_temp_dir().'/reel-install-interactive-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700, true);
+    file_put_contents($directory.'/.env', "UNCHANGED=yes\n");
+    $this->app->useEnvironmentPath($directory);
+    Http::fake(['*' => Http::response([
+        'application_id' => 'app-public-id',
+        'algorithm' => 'RS256',
+    ], 201)]);
+
+    $this->artisan('reel:install')
+        ->expectsQuestion('Reel URL', 'https://reel.example')
+        ->expectsQuestion('Application ID', 'app-public-id')
+        ->expectsQuestion('Enrollment code', 'one-use-code')
+        ->expectsOutputToContain('configured Nightwatch transport')
+        ->expectsChoice('Reel Context export', 'session_id', ['off', 'session_id', 'session_id_and_url'])
+        ->assertSuccessful();
+
+    expect(file_get_contents($directory.'/.env'))->toContain('REEL_CONTEXT_EXPORT="session_id"');
 
     unlink($directory.'/.env');
     rmdir($directory);

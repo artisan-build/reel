@@ -585,21 +585,22 @@ class ChunkIngestor
                     'event_ended_at' => $envelope['event_ended_at'],
                     'object_key' => $objectKey,
                 ]);
+
+                $session->incrementEach([
+                    'chunk_count' => 1,
+                    'compressed_bytes' => $compressedBytes,
+                ]);
+
+                if ($reorderDistance > $session->max_reorder_distance) {
+                    $session->forceFill(['max_reorder_distance' => $reorderDistance])->save();
+                }
+
+                $this->recordPaths($session, $events);
+                $this->recordMarkers($session, $events);
             } catch (Throwable $exception) {
                 $disk->delete($objectKey);
                 throw $exception;
             }
-
-            $session->incrementEach([
-                'chunk_count' => 1,
-                'compressed_bytes' => $compressedBytes,
-            ]);
-
-            if ($reorderDistance > $session->max_reorder_distance) {
-                $session->forceFill(['max_reorder_distance' => $reorderDistance])->save();
-            }
-
-            $this->recordPaths($session, $events);
 
             return new ChunkIngestResult(false, $origin);
         }, 3);
@@ -742,6 +743,33 @@ class ChunkIngestor
 
         if ($attributes !== []) {
             $session->forceFill($attributes)->save();
+        }
+    }
+
+    /** @param list<array<string, mixed>> $events */
+    private function recordMarkers(RecordingSession $session, array $events): void
+    {
+        foreach ($events as $event) {
+            $data = $event['data'] ?? null;
+
+            if (($event['type'] ?? null) !== 5
+                || ! is_int($event['timestamp'] ?? null)
+                || ! is_array($data)
+                || ! in_array($data['tag'] ?? null, ['reel.error', 'reel.server_error'], true)
+                || ! is_array($data['payload'] ?? null)) {
+                continue;
+            }
+
+            $session->markers()->create([
+                'application_id' => $session->application_id,
+                'marker_type' => $data['tag'] === 'reel.server_error' ? 'server_error' : 'error',
+                'occurred_at' => $event['timestamp'],
+                'metadata' => [
+                    'method' => $data['payload']['method'],
+                    'path' => $data['payload']['path'],
+                    'status' => $data['payload']['status'],
+                ],
+            ]);
         }
     }
 

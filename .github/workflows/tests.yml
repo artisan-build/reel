@@ -53,7 +53,6 @@ jobs:
         run: php artisan key:generate
 
       - name: Install JavaScriptCore for recorder tests
-        continue-on-error: true
         run: |
           sudo apt-get update
           sudo apt-get install -y libjavascriptcoregtk-4.1-bin || sudo apt-get install -y libjavascriptcoregtk-4.0-bin
@@ -70,4 +69,6 @@ jobs:
       # no commit here to trigger it, so this step can fail on a PR that changed nothing related.
       # Keeping it after the tests means the test signal is still there when that happens.
       - name: Run Security Audit
-        run: composer audit
+        run: |
+          composer audit
+          composer audit --working-dir=packages/reel-client

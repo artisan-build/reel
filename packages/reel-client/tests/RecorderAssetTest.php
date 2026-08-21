@@ -43,7 +43,7 @@ function reelRunJavaScriptCore(string $scenario): array
     $binary = reelJavaScriptCorePath();
 
     if ($binary === null) {
-        test()->markTestSkipped('JavaScriptCore is unavailable; real recorder execution is skipped on this platform.');
+        throw new RuntimeException('JavaScriptCore is required for recorder security tests.');
     }
 
     $root = dirname(__DIR__);
@@ -71,6 +71,13 @@ it('serves immutable precompiled rrweb and recorder assets', function (): void {
         ->assertOk()
         ->assertHeader('Content-Type', 'application/javascript; charset=UTF-8')
         ->assertSee('CompressionStream', false);
+});
+
+it('publishes the configured Reel origin to the recorder adapter', function (): void {
+    config()->set('reel.url', 'https://reel.example/base');
+
+    expect(Blade::render('<x-reel::recorder />'))
+        ->toContain('data-reel-url="https://reel.example/base"');
 });
 
 it('executes the shipped sanitizer against hostile snapshots and mutations', function (): void {
@@ -175,7 +182,7 @@ it('produces reconstructable FullSnapshot-first epochs with monotonic sequences'
     expect($secondEvents)->not->toBeEmpty();
     expect($newEpochEvents)->not->toBeEmpty();
 
-    expect($result['initial']['bufferedTypes'])->toBe([2, 4, 3])
+    expect($result['initial']['bufferedTypes'])->toBe([2, 4, 3, 5, 5, 5, 5])
         ->and($firstEvents[0]['type'])->toBe(2)
         ->and($newEpochEvents[0]['type'])->toBe(2)
         ->and($secondEvents[0]['data']['text'])->toBe('***')
@@ -209,12 +216,82 @@ it('executes fetch and xhr wrappers without changing host semantics', function (
     expect($result['nonInterference'])->each->toBeTrue();
 });
 
+it('preserves fetch and xhr wrappers installed after Reel when stopping', function (): void {
+    $result = reelRunJavaScriptCore('jsc-hook-ownership-scenario.js');
+
+    expect($result)->toBe([
+        'fetchPreserved' => true,
+        'xhrOpenPreserved' => true,
+        'xhrSendPreserved' => true,
+    ]);
+});
+
+it('correlates only same-origin application requests without attaching the upload grant', function (): void {
+    $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+    $sessionId = str_repeat('a', 64);
+
+    expect($result['requestHeaders'])->toBe([
+        'fetch' => $sessionId,
+        'fetchGrant' => null,
+        'xhr' => $sessionId,
+        'xhrGrant' => null,
+        'livewire' => $sessionId,
+        'crossFetch' => null,
+        'crossXhr' => null,
+    ])->and(json_encode($result['requestHeaders'], JSON_THROW_ON_ERROR))
+        ->not->toContain($result['uploadGrant']);
+});
+
+it('fails upload fetches closed instead of forwarding grants across redirects', function (): void {
+    $result = reelRunJavaScriptCore('jsc-upload-redirect-scenario.js');
+
+    expect($result['redirectTargets'])->toBe([])
+        ->and($result['redirect'])->toBe('error')
+        ->and($result['pendingUploads'])->toBe(1);
+});
+
+it('rejects an upload url outside the configured Reel origin before storing it', function (): void {
+    $result = reelRunJavaScriptCore('jsc-upload-origin-scenario.js');
+
+    expect($result['status'])->toMatchArray([
+        'state' => 'stopped',
+        'incomplete' => true,
+        'reason' => 'upload_origin_mismatch',
+    ])->and($result['storedSession'])->toBeNull()
+        ->and($result['redirectTargets'])->toBe([]);
+});
+
+it('records sanitized browser and server error markers only for same-origin responses', function (): void {
+    $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
+
+    expect($result['errorMarkers'])->toHaveCount(4)
+        ->and(array_column(array_column($result['errorMarkers'], 'data'), 'tag'))
+        ->toBe(['reel.error', 'reel.server_error', 'reel.error', 'reel.server_error'])
+        ->and(array_column(array_column(array_column($result['errorMarkers'], 'data'), 'payload'), 'path'))
+        ->toBe(['/host-error', '/host-server-error', '/host-xhr-error', '/host-xhr-server-error']);
+    $encoded = json_encode($result['errorMarkers'], JSON_THROW_ON_ERROR);
+    expect($encoded)->not->toContain('private-request-body');
+    expect($encoded)->not->toContain('private-xhr-body');
+    expect($encoded)->not->toContain('https://other.example');
+
+    foreach ($result['errorMarkers'] as $marker) {
+        expect(array_keys($marker))->toBe(['type', 'timestamp', 'data'])
+            ->and(array_keys($marker['data']['payload']))->toBe(['method', 'path', 'status']);
+    }
+});
+
+it('does not install a service worker or navigation handoff', function (): void {
+    expect(reelRecorderSource())
+        ->not->toContain('serviceWorker.register')
+        ->not->toContain('navigator.serviceWorker');
+});
+
 it('leaves host rendering unchanged when reel is unconfigured or grant issuance throws', function (): void {
     Route::middleware('web')->get('/reel-test/non-interference', fn (): string => Blade::render(
         '<main>byte-identical-host-response</main><x-reel::recorder />',
     ));
     config()->set([
-        'reel.url' => null,
+        'reel.url' => 'https://reel.example',
         'reel.application_id' => null,
         'reel.private_key' => null,
     ]);
@@ -242,6 +319,7 @@ it('ships hard failure ceilings without writing captured data to the console', f
     expect($source)->toContain("markIncomplete('buffer_ceiling')")
         ->and($source)->toContain("markIncomplete('retry_ceiling')")
         ->and($source)->toContain("markIncomplete('circuit_open')")
-        ->and($source)->toContain('Math.random() * delay / 2')
-        ->and($source)->not->toContain('console.log', 'console.debug');
+        ->and($source)->toContain('Math.random() * delay / 2');
+    expect($source)->not->toContain('console.log');
+    expect($source)->not->toContain('console.debug');
 });

@@ -19,6 +19,7 @@
     };
     const config = Object.freeze({
         grantUrl: script && script.dataset.reelGrantUrl,
+        reelUrl: script && script.dataset.reelUrl,
         csrfToken: script && script.dataset.reelCsrfToken,
         envelopeVersion: integer('reelEnvelopeVersion', 1),
         recorderVersion: (script && script.dataset.reelRecorderVersion) || '0.1.0',
@@ -80,6 +81,62 @@
         } catch (_) {
             return value.split(/[?#]/, 1)[0];
         }
+    }
+
+    function isSameOrigin(value) {
+        try {
+            return new URL(String(value), window.location.origin).origin === window.location.origin;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function sanitizeMethod(value) {
+        const method = String(value || 'GET').toUpperCase();
+        return /^[A-Z0-9!#$%&'*+.^_`|~-]{1,32}$/.test(method) ? method : 'UNKNOWN';
+    }
+
+    function sanitizePath(value) {
+        const path = stripQueryAndFragment(String(value || ''));
+        return typeof path === 'string' && path.startsWith('/') ? path.slice(0, 2048) : '/';
+    }
+
+    function requestDetails(input, options) {
+        const url = input && input.url ? input.url : String(input);
+        const method = (options && options.method) || (input && input.method) || 'GET';
+        return { url: url, method: sanitizeMethod(method), sameOrigin: isSameOrigin(url) };
+    }
+
+    function applicationFetchArguments(args, details) {
+        if (! details.sameOrigin || ! state.session || ! state.session.sessionId) return args;
+
+        try {
+            const options = Object.assign({}, args[1] || {});
+            const sourceHeaders = options.headers || (args[0] && args[0].headers);
+            const headers = new window.Headers(sourceHeaders || {});
+            headers.set('X-Reel-Session', state.session.sessionId);
+            options.headers = headers;
+
+            const correlated = Array.from(args);
+            correlated[1] = options;
+            return correlated;
+        } catch (_) {
+            state.reason = 'fetch_correlation_failed';
+            return args;
+        }
+    }
+
+    function validatedUploadUrl(value) {
+        const configured = new URL(String(config.reelUrl || ''));
+        const upload = new URL(String(value || ''));
+
+        if (! /^https?:$/.test(configured.protocol)
+            || ! /^https?:$/.test(upload.protocol)
+            || configured.origin !== upload.origin) {
+            throw new Error('upload_origin_mismatch');
+        }
+
+        return upload.href;
     }
 
     function sanitizeCss(value) {
@@ -412,6 +469,7 @@
     async function transmit(item, unload) {
         const body = JSON.stringify(item.envelope);
         if (unload && navigator.sendBeacon) {
+            // sendBeacon has no redirect mode; unload redirects cannot be made fail-closed here.
             return navigator.sendBeacon(state.session.uploadUrl, new Blob([body], { type: 'text/plain' }));
         }
 
@@ -422,6 +480,7 @@
             body: body,
             keepalive: Boolean(unload),
             credentials: 'omit',
+            redirect: 'error',
         }]);
         return response.ok;
     }
@@ -491,8 +550,9 @@
         }
     }
 
-    function inspectResponse(response, method, url) {
+    function inspectResponse(response, method, url, sameOrigin) {
         try {
+            if (sameOrigin !== true && ! isSameOrigin(url)) return;
             const capturePolicy = response && response.headers && response.headers.get('X-Reel-Capture');
             if (capturePolicy === 'hidden') {
                 state.hiddenLatched = true;
@@ -507,12 +567,18 @@
                 state.reason = null;
             }
             if (response && response.status >= 500) {
+                const serverError = response.headers
+                    && response.headers.get('X-Reel-Server-Error') === '1';
                 bufferEvent({
                     type: 5,
                     timestamp: Date.now(),
                     data: {
-                        tag: 'reel.error',
-                        payload: { method: method, path: stripQueryAndFragment(url), status: response.status },
+                        tag: serverError ? 'reel.server_error' : 'reel.error',
+                        payload: {
+                            method: sanitizeMethod(method),
+                            path: sanitizePath(url),
+                            status: response.status,
+                        },
                     },
                 });
             }
@@ -531,13 +597,15 @@
                 state.fetchWrapper = function () {
                     const args = arguments;
                     const receiver = this;
-                    const result = Reflect.apply(state.originalFetch, receiver, args);
+                    const details = requestDetails(args[0], args[1]);
+                    const result = Reflect.apply(
+                        state.originalFetch,
+                        receiver,
+                        applicationFetchArguments(args, details),
+                    );
                     try {
-                        const request = args[0];
-                        const method = (args[1] && args[1].method) || (request && request.method) || 'GET';
-                        const url = (request && request.url) || String(request);
                         Promise.resolve(result).then(
-                            (response) => inspectResponse(response, String(method), url),
+                            (response) => inspectResponse(response, details.method, details.url, details.sameOrigin),
                             () => {},
                         );
                     } catch (_) {
@@ -558,16 +626,29 @@
                 state.originalXhrSend = prototype.send;
                 state.xhrOpenWrapper = function (method, url) {
                     try {
-                        state.xhrMetadata.set(this, { method: String(method), url: String(url) });
+                        state.xhrMetadata.set(this, {
+                            method: sanitizeMethod(method),
+                            url: String(url),
+                            sameOrigin: isSameOrigin(url),
+                        });
                     } catch (_) {}
                     return Reflect.apply(state.originalXhrOpen, this, arguments);
                 };
                 state.xhrSendWrapper = function () {
                     const xhr = this;
                     try {
+                        const metadata = state.xhrMetadata.get(xhr);
+                        if (metadata && metadata.sameOrigin && state.session && state.session.sessionId) {
+                            xhr.setRequestHeader('X-Reel-Session', state.session.sessionId);
+                        }
                         xhr.addEventListener('loadend', () => {
-                            const metadata = state.xhrMetadata.get(xhr) || { method: 'GET', url: '' };
-                            inspectResponse({ status: xhr.status, headers: { get: (name) => xhr.getResponseHeader(name) } }, metadata.method, metadata.url);
+                            const observed = state.xhrMetadata.get(xhr) || { method: 'GET', url: '', sameOrigin: false };
+                            inspectResponse(
+                                { status: xhr.status, headers: { get: (name) => xhr.getResponseHeader(name) } },
+                                observed.method,
+                                observed.url,
+                                observed.sameOrigin,
+                            );
                         }, { once: true });
                     } catch (_) {}
                     return Reflect.apply(state.originalXhrSend, this, arguments);
@@ -625,7 +706,7 @@
                 'X-CSRF-TOKEN': config.csrfToken,
             },
             credentials: 'same-origin',
-            body: JSON.stringify({ consent: true }),
+            body: JSON.stringify({ consent: true, path: window.location.pathname || '/' }),
         }]);
         if (!response.ok) throw new Error('grant_rejected');
         const payload = await response.json();
@@ -633,7 +714,7 @@
             grant: payload.grant,
             sessionId: payload.session_id,
             applicationId: payload.application_id,
-            uploadUrl: payload.upload_url,
+            uploadUrl: validatedUploadUrl(payload.upload_url),
             maxEventTime: payload.max_event_time,
         };
         window.sessionStorage.setItem('artisan-build.reel.session', JSON.stringify(session));
@@ -702,6 +783,8 @@
         } catch (error) {
             if (error && error.message === 'hidden') {
                 stop('hidden', true);
+            } else if (error && error.message === 'upload_origin_mismatch') {
+                markIncomplete('upload_origin_mismatch');
             } else {
                 markIncomplete('start_failed');
             }

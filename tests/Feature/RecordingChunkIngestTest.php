@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 use App\Enums\CredentialStatus;
 use App\Enums\RecordingSessionStatus;
+use App\Livewire\Sessions\Index;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
+use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
+use App\Models\User;
 use App\Services\ChunkPrivacyValidator;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
@@ -331,6 +334,128 @@ it('derives indexed initial and latest paths from sanitized metadata events', fu
         ->and($session->initial_path_recorded_at)->toBe($startedAt + 1)
         ->and($session->latest_path_recorded_at)->toBe($startedAt + 2);
 });
+
+it('creates real sanitized marker rows from browser and Laravel server error events', function (string $tag, string $type): void {
+    $context = ingestContext();
+    $timestamp = now()->getTimestampMs();
+    $events = [
+        ...safeIngestEvents($timestamp),
+        [
+            'type' => 5,
+            'timestamp' => $timestamp + 1,
+            'data' => [
+                'tag' => $tag,
+                'payload' => [
+                    'method' => 'POST',
+                    'path' => '/checkout',
+                    'status' => 503,
+                ],
+            ],
+        ],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    $marker = RecordingMarker::query()->sole();
+    expect($marker->marker_type)->toBe($type)
+        ->and($marker->occurred_at)->toBe($timestamp + 1)
+        ->and($marker->metadata)->toMatchArray([
+            'method' => 'POST',
+            'path' => '/checkout',
+            'status' => 503,
+        ]);
+    expect(array_keys($marker->metadata))->toHaveCount(3)
+        ->each->toBeIn(['method', 'path', 'status']);
+})->with([
+    'browser' => ['reel.error', 'error'],
+    'server' => ['reel.server_error', 'server_error'],
+]);
+
+it('filters sessions by a real ingested error marker without observability providers', function (): void {
+    $marked = ingestContext();
+    $other = ingestContext();
+    $timestamp = now()->getTimestampMs();
+    $events = [
+        ...safeIngestEvents($timestamp),
+        [
+            'type' => 5,
+            'timestamp' => $timestamp + 1,
+            'data' => [
+                'tag' => 'reel.error',
+                'payload' => ['method' => 'GET', 'path' => '/failed', 'status' => 500],
+            ],
+        ],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($marked, $events))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($other))->assertAccepted();
+    $this->actingAs(User::factory()->create());
+    $index = new Index;
+    $index->markerType = 'error';
+
+    expect($index->sessions()->getCollection()->pluck('session_id')->all())
+        ->toBe([$marked['session_id']])
+        ->not->toContain($other['session_id']);
+});
+
+it('rejects error markers carrying bodies headers exception messages or extra fields', function (string $field): void {
+    $context = ingestContext();
+    $timestamp = now()->getTimestampMs();
+    $events = [
+        ...safeIngestEvents($timestamp),
+        [
+            'type' => 5,
+            'timestamp' => $timestamp + 1,
+            'data' => [
+                'tag' => 'reel.error',
+                'payload' => [
+                    'method' => 'GET',
+                    'path' => '/failed',
+                    'status' => 500,
+                    $field => 'private-marker-sentinel',
+                ],
+            ],
+        ],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))
+        ->assertUnprocessable()
+        ->assertJsonPath('reason', 'unknown_field');
+
+    expect(RecordingMarker::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+})->with(['request_body', 'response_body', 'headers', 'exception_message', 'dom']);
+
+it('rejects unsanitized error marker methods paths and statuses', function (string $field, mixed $value): void {
+    $context = ingestContext();
+    $timestamp = now()->getTimestampMs();
+    $payload = [
+        'method' => 'GET',
+        'path' => '/failed',
+        'status' => 500,
+    ];
+    $payload[$field] = $value;
+    $events = [
+        ...safeIngestEvents($timestamp),
+        [
+            'type' => 5,
+            'timestamp' => $timestamp + 1,
+            'data' => ['tag' => 'reel.error', 'payload' => $payload],
+        ],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))
+        ->assertUnprocessable()
+        ->assertJsonPath('reason', 'invalid_custom_event');
+
+    expect(RecordingMarker::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+})->with([
+    'method' => ['method', "GET\r\nX-Private: secret"],
+    'query string' => ['path', '/failed?token=private'],
+    'fragment' => ['path', '/failed#private'],
+    'non-error status' => ['status', 499],
+]);
 
 it('rejects forged signatures before inserts queue dispatches or object writes', function (): void {
     Queue::fake();
