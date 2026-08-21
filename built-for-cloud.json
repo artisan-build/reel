@@ -1,0 +1,64 @@
+{
+    "name": "Reel",
+    "slug": "reel",
+    "description": "Customer-owned browser session replay for debugging Laravel applications.",
+    "state": "experimental",
+    "limitations": "docs/limitations.md",
+    "resources": [
+        {
+            "id": "application",
+            "type": "application",
+            "kind": "compute"
+        },
+        {
+            "id": "database",
+            "type": "postgresql",
+            "driver": "pgsql"
+        },
+        {
+            "id": "object_storage",
+            "type": "laravel-object-storage",
+            "driver": "s3",
+            "visibility": "private"
+        },
+        {
+            "id": "queue",
+            "type": "managed-queue",
+            "driver": "sqs"
+        },
+        {
+            "id": "scheduler",
+            "type": "scheduler"
+        }
+    ],
+    "build_commands": [
+        "composer install --no-dev --optimize-autoloader --no-interaction",
+        "php artisan optimize"
+    ],
+    "post_deploy_commands": [
+        "php artisan migrate --force",
+        "php artisan reel:smoke"
+    ],
+    "scheduler": [
+        {
+            "command": "reel:finalize-sessions",
+            "expression": "* * * * *"
+        },
+        {
+            "command": "reel:retain-sessions",
+            "expression": "0 * * * *"
+        },
+        {
+            "command": "reel:retry-deletions --apply",
+            "expression": "0 * * * *"
+        },
+        {
+            "command": "reel:resume-erasures --apply",
+            "expression": "*/5 * * * *"
+        },
+        {
+            "command": "reel:sweep-orphans",
+            "expression": "0 0 * * *"
+        }
+    ]
+}

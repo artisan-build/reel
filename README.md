@@ -10,12 +10,29 @@ happened before a UI problem or server error.
 Recordings stay in infrastructure you own. Artisan Build does not meter sessions or recordings and
 runs no mandatory data plane for them.
 
-> **Status: experimental, pre-launch.** This repository currently contains the application
-> scaffold only. The recorder, ingest, player, retention, and correlation features described in the
-> product requirements are not implemented yet.
+> **Status: experimental, pre-launch.** Reel is ready for private deployment and controlled dogfood,
+> but has not completed the browser, privacy, performance, cost, and retention evidence required for
+> active catalog status. Read the [known limitations](docs/limitations.md) before recording real users.
 
 The full product definition, scope, and build sequence live in
 [`docs/product/reel-prd.md`](docs/product/reel-prd.md).
+
+## Deploy and connect
+
+The machine-readable [`built-for-cloud.json`](built-for-cloud.json) declares Reel's Laravel Cloud
+resources, build, post-deploy, and scheduler contract. The complete deployment, first-admin, recovery,
+upgrade, and uninstall procedures are in [`docs/deployment.md`](docs/deployment.md).
+
+To connect a monitored Laravel application after creating it in Reel:
+
+```bash
+composer require artisan-build/reel-client
+php artisan reel:install
+```
+
+The host installer generates its signing key locally and enrolls only the public key. Add the Reel
+Blade component to the host layout and call `Reel.start()` only after that application's consent and
+privacy decision.
 
 ## Stack
 
