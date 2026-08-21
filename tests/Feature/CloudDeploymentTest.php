@@ -28,7 +28,7 @@ it('keeps the catalog manifest aligned with live application configuration and s
     $schedule = new Process([PHP_BINARY, 'artisan', 'schedule:list', '--json'], base_path());
     $schedule->mustRun();
     $registeredScheduler = collect(json_decode($schedule->getOutput(), true, flags: JSON_THROW_ON_ERROR))
-        ->filter(fn (array $event): bool => str_starts_with($event['command'], 'php artisan reel:'))
+        ->filter(fn (array $event): bool => str_starts_with((string) $event['command'], 'php artisan reel:'))
         ->map(fn (array $event): array => [
             'command' => Str::after($event['command'], 'php artisan '),
             'expression' => $event['expression'],
@@ -56,7 +56,7 @@ it('keeps the catalog manifest aligned with live application configuration and s
             'queue' => 'managed-queue',
             'scheduler' => 'scheduler',
         ])
-        ->and($resources->contains(fn (array $resource): bool => str_contains($resource['type'], 'cache')))->toBeFalse()
+        ->and($resources->contains(fn (array $resource): bool => str_contains((string) $resource['type'], 'cache')))->toBeFalse()
         ->and($resources->get('object_storage')['visibility'])->toBe('private')
         ->and($resources->only(array_keys($liveDrivers))->map(fn (array $resource): string => $resource['driver'])->all())
         ->toBe($liveDrivers)
