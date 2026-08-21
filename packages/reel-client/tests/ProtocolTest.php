@@ -70,3 +70,13 @@ it('contains no node package or build manifest in repository sources', function 
 
     expect($found)->toBe([]);
 });
+
+it('fails CI and the suite closed when JavaScriptCore is unavailable', function (): void {
+    $root = dirname(__DIR__, 3);
+    $workflow = file_get_contents($root.'/.github/workflows/tests.yml');
+    $recorderTests = file_get_contents(__DIR__.'/RecorderAssetTest.php');
+
+    expect($workflow)->not->toContain('continue-on-error: true');
+    expect($recorderTests)->not->toContain('markTestSkipped');
+    expect($recorderTests)->toContain('JavaScriptCore is required for recorder security tests.');
+});

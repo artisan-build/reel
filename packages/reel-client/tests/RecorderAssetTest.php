@@ -43,7 +43,7 @@ function reelRunJavaScriptCore(string $scenario): array
     $binary = reelJavaScriptCorePath();
 
     if ($binary === null) {
-        test()->markTestSkipped('JavaScriptCore is unavailable; real recorder execution is skipped on this platform.');
+        throw new RuntimeException('JavaScriptCore is required for recorder security tests.');
     }
 
     $root = dirname(__DIR__);
@@ -216,6 +216,16 @@ it('executes fetch and xhr wrappers without changing host semantics', function (
     expect($result['nonInterference'])->each->toBeTrue();
 });
 
+it('preserves fetch and xhr wrappers installed after Reel when stopping', function (): void {
+    $result = reelRunJavaScriptCore('jsc-hook-ownership-scenario.js');
+
+    expect($result)->toBe([
+        'fetchPreserved' => true,
+        'xhrOpenPreserved' => true,
+        'xhrSendPreserved' => true,
+    ]);
+});
+
 it('correlates only same-origin application requests without attaching the upload grant', function (): void {
     $result = reelRunJavaScriptCore('jsc-lifecycle-scenario.js');
     $sessionId = str_repeat('a', 64);
@@ -246,7 +256,7 @@ it('rejects an upload url outside the configured Reel origin before storing it',
     expect($result['status'])->toMatchArray([
         'state' => 'stopped',
         'incomplete' => true,
-        'reason' => 'start_failed',
+        'reason' => 'upload_origin_mismatch',
     ])->and($result['storedSession'])->toBeNull()
         ->and($result['redirectTargets'])->toBe([]);
 });
@@ -258,9 +268,11 @@ it('records sanitized browser and server error markers only for same-origin resp
         ->and(array_column(array_column($result['errorMarkers'], 'data'), 'tag'))
         ->toBe(['reel.error', 'reel.server_error', 'reel.error', 'reel.server_error'])
         ->and(array_column(array_column(array_column($result['errorMarkers'], 'data'), 'payload'), 'path'))
-        ->toBe(['/host-error', '/host-server-error', '/host-xhr-error', '/host-xhr-server-error'])
-        ->and(json_encode($result['errorMarkers'], JSON_THROW_ON_ERROR))
-        ->not->toContain('private-request-body', 'private-xhr-body', 'https://other.example');
+        ->toBe(['/host-error', '/host-server-error', '/host-xhr-error', '/host-xhr-server-error']);
+    $encoded = json_encode($result['errorMarkers'], JSON_THROW_ON_ERROR);
+    expect($encoded)->not->toContain('private-request-body');
+    expect($encoded)->not->toContain('private-xhr-body');
+    expect($encoded)->not->toContain('https://other.example');
 
     foreach ($result['errorMarkers'] as $marker) {
         expect(array_keys($marker))->toBe(['type', 'timestamp', 'data'])
@@ -307,6 +319,7 @@ it('ships hard failure ceilings without writing captured data to the console', f
     expect($source)->toContain("markIncomplete('buffer_ceiling')")
         ->and($source)->toContain("markIncomplete('retry_ceiling')")
         ->and($source)->toContain("markIncomplete('circuit_open')")
-        ->and($source)->toContain('Math.random() * delay / 2')
-        ->and($source)->not->toContain('console.log', 'console.debug');
+        ->and($source)->toContain('Math.random() * delay / 2');
+    expect($source)->not->toContain('console.log');
+    expect($source)->not->toContain('console.debug');
 });

@@ -106,6 +106,7 @@
             "@lint",
             "@stan",
             "@test",
+            "composer audit --working-dir=packages/reel-client",
             "composer audit"
         ],
         "report": [

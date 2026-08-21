@@ -78,6 +78,30 @@ it('does not install a private key when enrollment fails', function (): void {
     rmdir($directory);
 });
 
+it('discloses the configured observability destination during interactive install', function (): void {
+    $directory = sys_get_temp_dir().'/reel-install-interactive-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700, true);
+    file_put_contents($directory.'/.env', "UNCHANGED=yes\n");
+    $this->app->useEnvironmentPath($directory);
+    Http::fake(['*' => Http::response([
+        'application_id' => 'app-public-id',
+        'algorithm' => 'RS256',
+    ], 201)]);
+
+    $this->artisan('reel:install')
+        ->expectsQuestion('Reel URL', 'https://reel.example')
+        ->expectsQuestion('Application ID', 'app-public-id')
+        ->expectsQuestion('Enrollment code', 'one-use-code')
+        ->expectsOutputToContain('configured Nightwatch transport')
+        ->expectsChoice('Reel Context export', 'session_id', ['off', 'session_id', 'session_id_and_url'])
+        ->assertSuccessful();
+
+    expect(file_get_contents($directory.'/.env'))->toContain('REEL_CONTEXT_EXPORT="session_id"');
+
+    unlink($directory.'/.env');
+    rmdir($directory);
+});
+
 it('writes env replacement values without interpreting regex backreferences', function (): void {
     $path = sys_get_temp_dir().'/reel-env-'.bin2hex(random_bytes(8));
     file_put_contents($path, "UNCHANGED=exact\nREEL_APPLICATION_ID=old\nAFTER=exact\n");

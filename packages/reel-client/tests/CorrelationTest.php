@@ -3,8 +3,13 @@
 declare(strict_types=1);
 
 use ArtisanBuild\ReelClient\Correlation;
+use ArtisanBuild\ReelClient\Http\Middleware\CorrelateReelRequest;
+use ArtisanBuild\ReelClient\Http\Middleware\RedactReelHeaders;
+use ArtisanBuild\ReelClient\IssuedSessionSet;
 use ArtisanBuild\ReelClient\Tests\TestCase;
 use Illuminate\Http\Request;
+use Illuminate\Session\ArraySessionHandler;
+use Illuminate\Session\Store;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Route;
 use Laravel\Nightwatch\Compatibility;
@@ -105,18 +110,59 @@ it('rejects a well-formed session id that was never issued to this visitor', fun
         ->assertJsonPath('reel', null);
 });
 
-it('rejects expired ids and ids issued to a different visitor session', function (string $case): void {
+it('rejects an expired id from this visitor session', function (): void {
     $claimed = str_repeat('c', 64);
-    $issued = $case === 'expired'
-        ? [$claimed => reelIssuedEntry(expiresAt: time() - 1)]
-        : [str_repeat('d', 64) => reelIssuedEntry()];
 
-    $this->withSession(['reel.issued_sessions' => $issued])
+    $this->withSession(['reel.issued_sessions' => [
+        $claimed => reelIssuedEntry(expiresAt: time() - 1),
+    ]])
         ->getJson('/reel-test/correlation', [Correlation::REQUEST_HEADER => $claimed])
         ->assertOk()
         ->assertJsonPath('binding', null)
         ->assertJsonPath('rejection', 'not_issued_or_expired');
-})->with(['expired', 'different visitor']);
+});
+
+it('rejects an id issued to a genuinely different visitor session', function (): void {
+    $sessionId = str_repeat('d', 64);
+    $handler = new ArraySessionHandler(120);
+    $visitorA = new Store('reel-session', $handler, 'visitor-a-session');
+    $visitorB = new Store('reel-session', $handler, 'visitor-b-session');
+    $visitorA->start();
+    $visitorB->start();
+    app(IssuedSessionSet::class)->add($visitorA, $sessionId, time() + 300, 8, '/visitor-a');
+    $visitorA->save();
+    expect($visitorA->getId())->not->toBe($visitorB->getId())
+        ->and($visitorA->get('reel.issued_sessions'))->toHaveKey($sessionId)
+        ->and($visitorB->missing('reel.issued_sessions'))->toBeTrue();
+
+    $request = Request::create('/orders', 'GET', server: [
+        'HTTP_ACCEPT' => 'application/json',
+        'HTTP_X_REEL_SESSION' => $sessionId,
+    ]);
+    $request->setLaravelSession($visitorB);
+    $correlate = app(CorrelateReelRequest::class);
+    $observed = [];
+
+    $response = app(RedactReelHeaders::class)->handle(
+        $request,
+        function (Request $request) use ($correlate, &$observed) {
+            return $correlate->handle($request, function (Request $request) use (&$observed) {
+                $observed = [
+                    'binding' => $request->attributes->get(Correlation::BINDING_ATTRIBUTE),
+                    'rejection' => $request->attributes->get(Correlation::REJECTION_ATTRIBUTE),
+                ];
+
+                return response('', 200);
+            });
+        },
+    );
+    $correlate->terminate($request, $response);
+
+    expect($observed)->toBe([
+        'binding' => null,
+        'rejection' => 'not_issued_or_expired',
+    ]);
+});
 
 it('requires a full exact session id match', function (): void {
     $issued = str_repeat('e', 64);
@@ -151,8 +197,10 @@ it('pins the exact Context and redacted request-header payload for every export 
         ->assertJsonPath('reel', $expected);
 
     $headers = $response->json('request_headers');
-    expect($headers)->not->toHaveKey('x-reel-session')
-        ->and(json_encode($headers, JSON_THROW_ON_ERROR))->not->toContain($sessionId, 'grant');
+    expect($headers)->not->toHaveKey('x-reel-session');
+    $encodedHeaders = json_encode($headers, JSON_THROW_ON_ERROR);
+    expect($encodedHeaders)->not->toContain($sessionId);
+    expect($encodedHeaders)->not->toContain('grant');
 })->with([
     'off' => ['off', null],
     'session id' => ['session_id', [
@@ -302,14 +350,14 @@ it('exports an ambiguity filter without selecting one of multiple plausible tabs
     expect(array_keys($context))->toBe(['binding', 'candidate_count', 'candidates_url'])
         ->and($context['binding'])->toBe('ambiguous')
         ->and($context['candidate_count'])->toBe(2)
-        ->and($context)->not->toHaveKey('session_id', 'url')
         ->and($context['candidates_url'])->toContain(
             'https://reel.example/applications/application-id/sessions?',
             'startedFrom=',
             'startedTo=',
             'path=%2Freel-test%2Fcorrelation',
-        )
-        ->not->toContain($first, $second);
+        );
+    expect($context['candidates_url'])->not->toContain($first);
+    expect($context['candidates_url'])->not->toContain($second);
 });
 
 it('keeps stock Nightwatch dev-only and unmodified', function (): void {
@@ -317,14 +365,19 @@ it('keeps stock Nightwatch dev-only and unmodified', function (): void {
     $package = json_decode(file_get_contents(dirname(__DIR__).'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
     $encoded = json_encode([$root, $package], JSON_THROW_ON_ERROR);
 
-    expect(array_keys($root['require']))->not->toContain('laravel/nightwatch', 'laravel/hone')
-        ->and(array_keys($root['require-dev']))->not->toContain('laravel/nightwatch', 'laravel/hone')
-        ->and(array_keys($package['require']))->not->toContain('laravel/nightwatch', 'laravel/hone')
-        ->and($package['require-dev']['laravel/nightwatch'])->toBe('^1.28')
+    expect(array_keys($root['require']))->not->toContain('laravel/nightwatch');
+    expect(array_keys($root['require']))->not->toContain('laravel/hone');
+    expect(array_keys($root['require-dev']))->not->toContain('laravel/nightwatch');
+    expect(array_keys($root['require-dev']))->not->toContain('laravel/hone');
+    expect(array_keys($package['require']))->not->toContain('laravel/nightwatch');
+    expect(array_keys($package['require']))->not->toContain('laravel/hone');
+    expect($package['require-dev']['laravel/nightwatch'])->toBe('^1.28')
         ->and($root['repositories'])->toBe([[
             'type' => 'path',
             'url' => 'packages/reel-client',
             'options' => ['symlink' => true],
-        ]])
-        ->and($encoded)->not->toContain('composer-patches', 'cweagans/composer-patches', 'nightwatch-fork');
+        ]]);
+    expect($encoded)->not->toContain('composer-patches');
+    expect($encoded)->not->toContain('cweagans/composer-patches');
+    expect($encoded)->not->toContain('nightwatch-fork');
 });

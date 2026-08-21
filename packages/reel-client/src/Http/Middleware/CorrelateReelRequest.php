@@ -91,7 +91,6 @@ final readonly class CorrelateReelRequest
 
     private function apply(Request $request, string $sessionId, string $binding): void
     {
-        $request->attributes->set(Correlation::SESSION_ATTRIBUTE, $sessionId);
         $request->attributes->set(Correlation::BINDING_ATTRIBUTE, $binding);
         $mode = $this->exportMode();
 

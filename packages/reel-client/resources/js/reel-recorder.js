@@ -783,6 +783,8 @@
         } catch (error) {
             if (error && error.message === 'hidden') {
                 stop('hidden', true);
+            } else if (error && error.message === 'upload_origin_mismatch') {
+                markIncomplete('upload_origin_mismatch');
             } else {
                 markIncomplete('start_failed');
             }

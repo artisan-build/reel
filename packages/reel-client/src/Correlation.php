@@ -12,8 +12,6 @@ final class Correlation
 
     public const string CLAIM_ATTRIBUTE = 'reel.correlation.claim';
 
-    public const string SESSION_ATTRIBUTE = 'reel.correlation.session_id';
-
     public const string BINDING_ATTRIBUTE = 'reel.correlation.binding';
 
     public const string REJECTION_ATTRIBUTE = 'reel.correlation.rejection';

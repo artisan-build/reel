@@ -260,6 +260,24 @@ it('evicts the oldest issued session id when the bound is exceeded', function ()
         ->not->toContain($oldest);
 });
 
+it('evicts the earlier-expiring session when issuance times tie', function (): void {
+    $session = $this->app['session']->driver();
+    $issuedAt = time() - 10;
+    $earlierExpiry = str_repeat('7', 64);
+    $laterExpiry = str_repeat('8', 64);
+    $new = str_repeat('9', 64);
+    $session->put('reel.issued_sessions', [
+        $laterExpiry => ['expires_at' => time() + 300, 'issued_at' => $issuedAt],
+        $earlierExpiry => ['expires_at' => time() + 30, 'issued_at' => $issuedAt],
+    ]);
+
+    (new IssuedSessionSet)->add($session, $new, time() + 300, 2);
+
+    expect(array_keys($session->get('reel.issued_sessions')))
+        ->toBe([$laterExpiry, $new])
+        ->not->toContain($earlierExpiry);
+});
+
 it('rejects wrong audience issuer and expired grants', function (): void {
     $clock = new class implements ClockInterface
     {

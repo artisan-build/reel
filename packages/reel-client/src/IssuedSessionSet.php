@@ -20,7 +20,13 @@ final class IssuedSessionSet
             'path' => $this->safePath($path),
         ];
 
-        uasort($issued, fn (array $left, array $right): int => $left['issued_at'] <=> $right['issued_at']);
+        uasort($issued, fn (array $left, array $right): int => [
+            $left['issued_at'],
+            $left['expires_at'],
+        ] <=> [
+            $right['issued_at'],
+            $right['expires_at'],
+        ]);
 
         $session->put('reel.issued_sessions', array_slice($issued, -max(1, $limit), null, true));
     }

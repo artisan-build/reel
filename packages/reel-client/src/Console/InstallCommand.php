@@ -31,7 +31,7 @@ final class InstallCommand extends Command
         $contextExport = (string) ($this->option('context-export') ?: 'off');
 
         if ($interactiveInstall && ! $this->option('context-export')) {
-            $this->components->warn('Enabled Reel Context is visible to your configured observability transport, which may be Nightwatch SaaS, Hone, or another endpoint.');
+            $this->components->warn('Reel Context is sent to your configured Nightwatch transport: SaaS, Hone, or another endpoint.');
             $contextExport = (string) $this->choice('Reel Context export', Correlation::EXPORT_MODES, 0);
         }
 
