@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\RecordingSessionStatus;
 use App\Events\CompactionCandidateVerified;
 use App\Events\CompactionCandidateWritten;
+use App\Events\CompactionPrefixLocked;
 use App\Events\CompactionPublished;
 use App\Jobs\CleanupCompactionCandidate;
 use App\Models\RecordingChunk;
@@ -70,6 +71,7 @@ class RecordingCompactor
         $this->locks->acquire($prefixLock);
 
         try {
+            event(new CompactionPrefixLocked($recordingSessionId));
             $currentStatus = RecordingSession::query()->whereKey($recordingSessionId)->value('status');
             $currentStatus = $currentStatus instanceof RecordingSessionStatus
                 ? $currentStatus

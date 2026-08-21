@@ -6,6 +6,7 @@ use App\Enums\RecordingEpochStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Events\CompactionCandidateVerified;
 use App\Events\CompactionCandidateWritten;
+use App\Events\CompactionPrefixLocked;
 use App\Events\CompactionPublished;
 use App\Jobs\CleanupCompactionCandidate;
 use App\Jobs\CompactRecordingSession;
@@ -319,6 +320,31 @@ it('retains temporary chunks and schedules exact candidate cleanup when deletion
     expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'finish_concurrent_deletion'))->toBeTrue()
         ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted);
     expect(Storage::disk('local')->allFiles(resolve(RecordingDeletion::class)->prefix($session->fresh(['application']))))->toBe([]);
+});
+
+it('rechecks terminal state after acquiring the prefix lock before writing any candidate', function (): void {
+    Queue::fake();
+    $session = createCompactionFixture();
+    $lockQueries = [];
+    DB::listen(function (QueryExecuted $query) use (&$lockQueries): void {
+        if (str_contains(strtolower($query->sql), 'pg_advisory_lock')) {
+            $lockQueries[] = $query->sql;
+        }
+    });
+    Event::listen(CompactionPrefixLocked::class, function (CompactionPrefixLocked $event): void {
+        RecordingSession::query()->findOrFail($event->recordingSessionId)
+            ->transitionTo(RecordingSessionStatus::Deleting, 'deletion_won_prefix_lock');
+    });
+
+    resolve(RecordingCompactor::class)->compact($session->getKey());
+
+    $session->refresh();
+    expect($session->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and($session->manifest)->toBeNull()
+        ->and($lockQueries)->not->toBeEmpty()
+        ->and(Storage::disk('local')->allFiles())
+        ->toBe([$session->chunks()->sole()->object_key]);
+    Queue::assertNothingPushed();
 });
 
 it('blocks publication after a concurrent transition to failed', function (): void {
