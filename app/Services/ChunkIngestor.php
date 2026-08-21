@@ -659,6 +659,10 @@ class ChunkIngestor
             'upload_cutoff_at' => $expiresAt,
             'maximum_expires_at' => $issuedAt->getTimestamp()
                 + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'expires_at' => $issuedAt->getTimestamp()
+                + (int) config('reel_ingest.maximum_session_retention_seconds'),
+            'delete_not_before' => $issuedAt->getTimestamp()
+                + (int) config('reel_ingest.maximum_session_retention_seconds'),
             'status_changed_at' => now(),
         ]);
         $session->status = RecordingSessionStatus::Recording;

@@ -4,6 +4,10 @@ use App\Console\Commands\FinalizeRecordingSessions;
 use App\Console\Commands\Fresh;
 use App\Console\Commands\InstallFluxPro;
 use App\Console\Commands\OptimizeTailwind;
+use App\Console\Commands\ReconcileRecordingStorage;
+use App\Console\Commands\RetainRecordingSessions;
+use App\Console\Commands\RetryRecordingDeletions;
+use App\Console\Commands\SweepRecordingOrphans;
 use App\Http\Middleware\EnsureUserIsAdministrator;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -21,6 +25,10 @@ return Application::configure(basePath: dirname(__DIR__))
         FinalizeRecordingSessions::class,
         InstallFluxPro::class,
         OptimizeTailwind::class,
+        ReconcileRecordingStorage::class,
+        RetainRecordingSessions::class,
+        RetryRecordingDeletions::class,
+        SweepRecordingOrphans::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([

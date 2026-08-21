@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\RecordingSessionStatus;
 use App\Models\Application;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,6 +15,11 @@ class ReplayPlayerUrlController extends Controller
         $session = $application->recordingSessions()
             ->where('session_id', $recordingSession)
             ->firstOrFail();
+        abort_if(
+            in_array($session->status, [RecordingSessionStatus::Deleting, RecordingSessionStatus::Deleted], true),
+            409,
+            'replay_deletion_started',
+        );
         $channel = $request->query('channel');
         abort_unless(is_string($channel) && preg_match('/^[a-f0-9]{96}$/', $channel) === 1, 404);
 

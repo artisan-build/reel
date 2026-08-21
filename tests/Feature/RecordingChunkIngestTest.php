@@ -1440,8 +1440,14 @@ it('accepts only existing gap fills while closing and rejects all compacting upl
         ->assertConflict()
         ->assertJsonPath('reason', 'session_not_accepting_uploads');
 
+    $session->transitionTo(RecordingSessionStatus::Deleting, 'retention_deletion_started');
+    postIngestEnvelope(ingestEnvelope($context, overrides: ['sequence' => 1, 'grant' => $grant]))
+        ->assertConflict()
+        ->assertJsonPath('reason', 'session_not_accepting_uploads');
+
     expect(RecordingChunk::query()->orderBy('sequence')->pluck('sequence')->all())->toBe([0, 2])
-        ->and(DB::table('operational_counters')->where('metric', 'late_upload_rejections')->value('value'))->toBe(3);
+        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Deleting)
+        ->and(DB::table('operational_counters')->where('metric', 'late_upload_rejections')->value('value'))->toBe(4);
 });
 
 it('assigns a started-at maximum expiry to newly accepted sessions', function (): void {

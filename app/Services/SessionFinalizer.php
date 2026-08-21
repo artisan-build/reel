@@ -75,10 +75,13 @@ class SessionFinalizer
 
                 [$gapCount, $concurrentEpochCount, $reasons] = $this->completeness($session);
                 $endedAt = now();
+                $expiresAt = $endedAt->addDays((int) config('reel_retention.ordinary_days'));
                 $session->forceFill([
                     'status' => RecordingSessionStatus::Compacting,
                     'status_changed_at' => $endedAt,
                     'ended_at' => $endedAt,
+                    'expires_at' => $expiresAt,
+                    'delete_not_before' => $expiresAt,
                     'duration_seconds' => max(0, (int) $session->started_at->diffInSeconds($endedAt)),
                     'is_complete' => $reasons === [],
                     'incomplete_reasons' => $reasons,
