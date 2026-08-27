@@ -6,10 +6,12 @@ use App\Jobs\CloudSmokeRoundTrip;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
 use Symfony\Component\Process\Process;
+use Tests\Fixtures\ManagedQueueConnector;
 
 function cloudManifest(): array
 {
@@ -18,6 +20,26 @@ function cloudManifest(): array
         true,
         flags: JSON_THROW_ON_ERROR,
     );
+}
+
+/**
+ * Configure the connection shape Laravel Cloud actually provisions: a managed queue whose
+ * single queue is named for the deployment, where an invented queue name does not exist and
+ * never will. Readiness tests run against this rather than the database driver, on which the
+ * probe's isolated queue name works fine and hides the failure production sees.
+ */
+function useManagedQueue(string $provisioned = 'reel-queue-927aa415'): void
+{
+    Queue::extend('managed-queue', fn (): ManagedQueueConnector => new ManagedQueueConnector(resolve('db')));
+
+    config()->set('queue.connections.managed', [
+        'driver' => 'managed-queue',
+        'connection' => null,
+        'table' => 'jobs',
+        'queue' => $provisioned,
+        'retry_after' => 90,
+    ]);
+    config()->set('queue.default', 'managed');
 }
 
 /** @return array<string, mixed> */
@@ -233,7 +255,7 @@ it('documents the supported local and non-interactive first-admin bootstrap form
 
 it('runs the configured queue and removes its object storage probe', function (): void {
     config()->set('filesystems.default', 'smoke');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     Storage::fake('smoke', ['driver' => 's3']);
 
     $this->artisan('reel:smoke')
@@ -245,7 +267,7 @@ it('runs the configured queue and removes its object storage probe', function ()
 
 it('fails readiness when the database has a pending migration', function (): void {
     config()->set('filesystems.default', 'smoke-pending-migration');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     Storage::fake('smoke-pending-migration', ['driver' => 's3']);
     DB::table('migrations')->where('migration', '2026_08_21_000001_harden_retention_concurrency')->delete();
 
@@ -256,7 +278,7 @@ it('fails readiness when the database has a pending migration', function (): voi
 
 it('fails readiness when S3 object storage is unwritable', function (): void {
     config()->set('filesystems.default', 'unwritable');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     $disk = Mockery::mock(FilesystemAdapter::class);
     $disk->shouldReceive('getConfig')->once()->andReturn(['driver' => 's3']);
     $disk->shouldReceive('put')->once()->andReturnFalse();
@@ -271,7 +293,7 @@ it('fails readiness when S3 object storage is unwritable', function (): void {
 
 it('removes the storage probe when a later readiness check fails', function (): void {
     config()->set('filesystems.default', 'smoke-later-failure');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     $objects = [];
     $probeWritten = false;
     $cleanupStarted = false;
@@ -312,7 +334,7 @@ it('removes the storage probe when a later readiness check fails', function (): 
 
 it('fails readiness when S3 reports that scratch deletion failed', function (): void {
     config()->set('filesystems.default', 'smoke-delete-failure');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     $objects = [];
     $deleteAttempted = false;
     $disk = Mockery::mock(FilesystemAdapter::class);
@@ -343,7 +365,7 @@ it('fails readiness when S3 reports that scratch deletion failed', function (): 
 
 it('rejects a local filesystem before reporting Cloud readiness', function (): void {
     config()->set('filesystems.default', 'smoke-local');
-    config()->set('queue.default', 'database');
+    useManagedQueue();
     Storage::fake('smoke-local', ['driver' => 'local']);
 
     $this->artisan('reel:smoke')
@@ -361,7 +383,29 @@ it('rejects an inline queue before reporting Cloud readiness', function (): void
         ->expectsOutputToContain('The configured queue driver [sync] is inline.');
 });
 
-it('works only the dedicated smoke queue and leaves customer jobs untouched', function (): void {
+it('round-trips through the queue a managed connection actually provisions', function (): void {
+    config()->set('filesystems.default', 'smoke-managed-queue');
+    useManagedQueue('reel-queue-927aa415');
+    Storage::fake('smoke-managed-queue', ['driver' => 's3']);
+
+    $this->artisan('reel:smoke')
+        ->assertSuccessful()
+        ->expectsOutputToContain('Reel is ready');
+
+    expect(DB::table('jobs')->count())->toBe(0);
+});
+
+it('models a managed connection on which an invented queue name does not exist', function (): void {
+    useManagedQueue('reel-queue-927aa415');
+
+    expect(fn (): mixed => Queue::connection('managed')->push('job', '', 'reel-smoke'))
+        ->toThrow(RuntimeException::class, 'Managed queue [reel-smoke] does not exist.');
+});
+
+// Deliberately the database driver: this is the branch where a queue name is a free string,
+// so the probe keeps its own queue and `queue:work --once` cannot reach a customer job. Cloud
+// readiness is proven above against the managed connection instead.
+it('keeps the probe on an isolated queue when the driver creates queue names on demand', function (): void {
     config()->set('filesystems.default', 'smoke-dedicated-queue');
     config()->set('queue.default', 'database');
     Storage::fake('smoke-dedicated-queue', ['driver' => 's3']);
