@@ -307,8 +307,12 @@ it('removes the storage probe when a later readiness check fails', function (): 
 
         return true;
     });
-    $disk->shouldReceive('get')->andReturnUsing(fn (string $path): ?string => $objects[$path] ?? null);
-    $disk->shouldReceive('exists')->andReturnUsing(fn (string $path): bool => isset($objects[$path]));
+    $disk->shouldReceive('get')->andReturnUsing(function (string $path) use (&$objects): ?string {
+        return $objects[$path] ?? null;
+    });
+    $disk->shouldReceive('exists')->andReturnUsing(function (string $path) use (&$objects): bool {
+        return isset($objects[$path]);
+    });
     $disk->shouldReceive('delete')->once()->andReturnUsing(function (string $path) use (&$objects, &$cleanupStarted): bool {
         $cleanupStarted = true;
         unset($objects[$path]);
@@ -344,7 +348,9 @@ it('fails readiness when S3 reports that scratch deletion failed', function (): 
 
         return true;
     });
-    $disk->shouldReceive('get')->andReturnUsing(fn (string $path): ?string => $objects[$path] ?? null);
+    $disk->shouldReceive('get')->andReturnUsing(function (string $path) use (&$objects): ?string {
+        return $objects[$path] ?? null;
+    });
     $disk->shouldReceive('exists')->andReturnUsing(function (string $path) use (&$deleteAttempted, &$objects): bool {
         return $deleteAttempted ? false : isset($objects[$path]);
     });
@@ -393,6 +399,36 @@ it('round-trips through the queue a managed connection actually provisions', fun
         ->expectsOutputToContain('Reel is ready');
 
     expect(DB::table('jobs')->count())->toBe(0);
+});
+
+it('names the connection and queue it worked when the round trip never completes', function (): void {
+    config()->set('filesystems.default', 'smoke-stalled-queue');
+    useManagedQueue('reel-queue-927aa415');
+    $objects = [];
+    $disk = Mockery::mock(FilesystemAdapter::class);
+    $disk->shouldReceive('getConfig')->once()->andReturn(['driver' => 's3']);
+    $disk->shouldReceive('put')->andReturnUsing(function (string $path, string $contents) use (&$objects): bool {
+        // Keep the storage probe and swallow the queue's write, so the round trip never lands.
+        $objects[$path] ??= $contents;
+
+        return true;
+    });
+    $disk->shouldReceive('get')->andReturnUsing(function (string $path) use (&$objects): ?string {
+        return $objects[$path] ?? null;
+    });
+    $disk->shouldReceive('exists')->andReturnUsing(function (string $path) use (&$objects): bool {
+        return isset($objects[$path]);
+    });
+    $disk->shouldReceive('delete')->once()->andReturnUsing(function (string $path) use (&$objects): bool {
+        unset($objects[$path]);
+
+        return true;
+    });
+    Storage::set('smoke-stalled-queue', $disk);
+
+    $this->artisan('reel:smoke')
+        ->assertFailed()
+        ->expectsOutputToContain('The configured queue did not complete its smoke job [managed:reel-queue-927aa415].');
 });
 
 it('models a managed connection on which an invented queue name does not exist', function (): void {

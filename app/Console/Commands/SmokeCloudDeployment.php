@@ -154,7 +154,7 @@ class SmokeCloudDeployment extends Command
         if ($disk->get($path) !== $roundTrip) {
             $worked = $isolated ?? (string) config("queue.connections.{$connection}.queue", 'default');
 
-            throw new RuntimeException("The configured queue [{$connection}] did not complete its smoke job on queue [{$worked}].");
+            throw new RuntimeException("The configured queue did not complete its smoke job [{$connection}:{$worked}].");
         }
     }
 
