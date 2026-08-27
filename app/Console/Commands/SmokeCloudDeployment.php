@@ -19,6 +19,27 @@ class SmokeCloudDeployment extends Command
 {
     private const string SMOKE_QUEUE = 'reel-smoke';
 
+    /**
+     * Queue drivers that create a queue the first time something is pushed to it.
+     *
+     * On these a queue name is just a column value or a list key, so the probe gets an
+     * isolated queue for free and `queue:work --once` can only ever drain the probe.
+     *
+     * On Laravel Cloud the managed queue is SQS, where the name IS the provisioned
+     * resource: an environment gets exactly one, named for the deployment, and nothing
+     * will ever create a second. There the probe has to use the queue the application is
+     * configured for and identify its own work by the round-trip token it already
+     * carries. That costs the isolation -- a drain can process a real job -- but a smoke
+     * test that verifies a queue nobody provisioned proves nothing even when it passes.
+     *
+     * An unrecognised driver is treated as provisioned rather than free. Guessing wrong
+     * that way only costs the probe its isolation; guessing wrong the other way makes the
+     * smoke test impossible to pass, which is the failure this list exists to prevent.
+     *
+     * @var list<string>
+     */
+    private const array ON_DEMAND_QUEUE_DRIVERS = ['database', 'redis', 'beanstalkd'];
+
     /** @var string */
     protected $signature = 'reel:smoke';
 
@@ -105,22 +126,46 @@ class SmokeCloudDeployment extends Command
 
     private function verifyQueue(FilesystemAdapter $disk, string $path, string $probe, string $roundTrip): void
     {
-        dispatch(new CloudSmokeRoundTrip($path, $probe, $roundTrip, now()->addMinute()->getTimestamp()))
-            ->onQueue(self::SMOKE_QUEUE);
+        $connection = (string) config('queue.default');
+        $isolated = $this->isolatedQueue($connection);
+        $job = new CloudSmokeRoundTrip($path, $probe, $roundTrip, now()->addMinute()->getTimestamp());
+
+        if ($isolated !== null) {
+            $job->onQueue($isolated);
+        }
+
+        dispatch($job);
+
+        $options = [
+            'connection' => $connection,
+            '--once' => true,
+            '--sleep' => 0,
+            '--tries' => 1,
+        ];
+
+        if ($isolated !== null) {
+            $options['--queue'] = $isolated;
+        }
 
         for ($attempt = 0; $attempt < 5 && $disk->get($path) !== $roundTrip; $attempt++) {
-            Artisan::call('queue:work', [
-                'connection' => (string) config('queue.default'),
-                '--queue' => self::SMOKE_QUEUE,
-                '--once' => true,
-                '--sleep' => 0,
-                '--tries' => 1,
-            ]);
+            Artisan::call('queue:work', $options);
         }
 
         if ($disk->get($path) !== $roundTrip) {
-            throw new RuntimeException('The configured queue did not complete its smoke job.');
+            $worked = $isolated ?? (string) config("queue.connections.{$connection}.queue", 'default');
+
+            throw new RuntimeException("The configured queue did not complete its smoke job [{$connection}:{$worked}].");
         }
+    }
+
+    /**
+     * The queue to isolate the probe on, or null to use the one the connection is configured for.
+     */
+    private function isolatedQueue(string $connection): ?string
+    {
+        $driver = (string) config("queue.connections.{$connection}.driver", 'unknown');
+
+        return in_array($driver, self::ON_DEMAND_QUEUE_DRIVERS, true) ? self::SMOKE_QUEUE : null;
     }
 
     private function verifyScheduler(): void
