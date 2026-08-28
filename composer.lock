@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "860b05ceceb261fabfaf6c94a42c4ca9",
+    "content-hash": "c46476b18741223b10a3ab7093a7eefd",
     "packages": [
         {
             "name": "artisan-build/built-for-cloud",
-            "version": "v0.3.3",
+            "version": "v0.4.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/artisan-build/built-for-cloud.git",
-                "reference": "7b7171e4dec68f6193b833ab97b774edcaae6a9f"
+                "reference": "7bacdb2bb536e4f6a87fa46e29d26c009fcbf1da"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/7b7171e4dec68f6193b833ab97b774edcaae6a9f",
-                "reference": "7b7171e4dec68f6193b833ab97b774edcaae6a9f",
+                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/7bacdb2bb536e4f6a87fa46e29d26c009fcbf1da",
+                "reference": "7bacdb2bb536e4f6a87fa46e29d26c009fcbf1da",
                 "shasum": ""
             },
             "require": {
@@ -62,9 +62,9 @@
             ],
             "support": {
                 "issues": "https://github.com/artisan-build/built-for-cloud/issues",
-                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.3.3"
+                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.4.0"
             },
-            "time": "2026-08-21T12:46:26+00:00"
+            "time": "2026-08-24T11:35:08+00:00"
         },
         {
             "name": "artisan-build/reel-client",
