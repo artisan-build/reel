@@ -37,7 +37,7 @@ class AppServiceProvider extends ServiceProvider
     /** Ensure scheduler mutexes cannot silently use Laravel's null cache store. */
     private function ensureCacheStoreIsConfigured(): void
     {
-        if (app()->runningInConsole() && ($_SERVER['argv'][1] ?? null) === 'package:discover') {
+        if (app()->runningInConsole() && (\Illuminate\Support\Facades\Request::server('argv')[1] ?? null) === 'package:discover') {
             return;
         }
 
