@@ -49,8 +49,10 @@ function resolvedCloudConfigWithoutEnvironment(): array
 require 'vendor/autoload.php';
 $app = require 'bootstrap/app.php';
 $app->loadEnvironmentFrom('.env.cloud-invariant-absent');
-$kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
-$kernel->bootstrap();
+$app->bootstrapWith([
+    Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+    Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+]);
 echo json_encode([
     'database.default' => config('database.default'),
     'queue.default' => config('queue.default'),

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use RuntimeException;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -28,8 +29,20 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->ensureCacheStoreIsConfigured();
         $this->configureDefaults();
         $this->configureRateLimiting();
+    }
+
+    /** Ensure scheduler mutexes cannot silently use Laravel's null cache store. */
+    private function ensureCacheStoreIsConfigured(): void
+    {
+        $store = config('cache.default');
+        $stores = config('cache.stores', []);
+
+        if (! is_string($store) || $store === '' || ! is_array($stores) || ! array_key_exists($store, $stores)) {
+            throw new RuntimeException('CACHE_STORE must name a configured cache store.');
+        }
     }
 
     /**
