@@ -5375,6 +5375,43 @@ namespace Illuminate\Support\Facades {
         }
 
         /**
+         * Get all of the cached values and their expiration times.
+         *
+         * @param bool $unserialize
+         * @return \Illuminate\Cache\array<string, array{value: mixed, expiresAt: float}>
+         * @static
+         */
+        public static function all($unserialize = true)
+        {
+            /** @var \Illuminate\Cache\ArrayStore $instance */
+            return $instance->all($unserialize);
+        }
+
+        /**
+         * Remove all items from the cache.
+         *
+         * @return bool
+         * @static
+         */
+        public static function flush()
+        {
+            /** @var \Illuminate\Cache\ArrayStore $instance */
+            return $instance->flush();
+        }
+
+        /**
+         * Get the cache key prefix.
+         *
+         * @return string
+         * @static
+         */
+        public static function getPrefix()
+        {
+            /** @var \Illuminate\Cache\ArrayStore $instance */
+            return $instance->getPrefix();
+        }
+
+        /**
          * Get a lock instance.
          *
          * @param string $name
@@ -5385,7 +5422,7 @@ namespace Illuminate\Support\Facades {
          */
         public static function lock($name, $seconds = 0, $owner = null)
         {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
+            /** @var \Illuminate\Cache\ArrayStore $instance */
             return $instance->lock($name, $seconds, $owner);
         }
 
@@ -5399,108 +5436,8 @@ namespace Illuminate\Support\Facades {
          */
         public static function restoreLock($name, $owner)
         {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
+            /** @var \Illuminate\Cache\ArrayStore $instance */
             return $instance->restoreLock($name, $owner);
-        }
-
-        /**
-         * Remove an item from the cache if it is expired.
-         *
-         * @param string $key
-         * @return bool
-         * @static
-         */
-        public static function forgetIfExpired($key)
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->forgetIfExpired($key);
-        }
-
-        /**
-         * Remove all items from the cache.
-         *
-         * @return bool
-         * @static
-         */
-        public static function flush()
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->flush();
-        }
-
-        /**
-         * Get the underlying database connection.
-         *
-         * @return \Illuminate\Database\PostgresConnection
-         * @static
-         */
-        public static function getConnection()
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->getConnection();
-        }
-
-        /**
-         * Set the underlying database connection.
-         *
-         * @param \Illuminate\Database\ConnectionInterface $connection
-         * @return \Illuminate\Cache\DatabaseStore
-         * @static
-         */
-        public static function setConnection($connection)
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->setConnection($connection);
-        }
-
-        /**
-         * Get the connection used to manage locks.
-         *
-         * @return \Illuminate\Database\PostgresConnection
-         * @static
-         */
-        public static function getLockConnection()
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->getLockConnection();
-        }
-
-        /**
-         * Specify the connection that should be used to manage locks.
-         *
-         * @param \Illuminate\Database\ConnectionInterface $connection
-         * @return \Illuminate\Cache\DatabaseStore
-         * @static
-         */
-        public static function setLockConnection($connection)
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->setLockConnection($connection);
-        }
-
-        /**
-         * Get the cache key prefix.
-         *
-         * @return string
-         * @static
-         */
-        public static function getPrefix()
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            return $instance->getPrefix();
-        }
-
-        /**
-         * Set the cache key prefix.
-         *
-         * @param string $prefix
-         * @return void
-         * @static
-         */
-        public static function setPrefix($prefix)
-        {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
-            $instance->setPrefix($prefix);
         }
 
         /**
@@ -5511,7 +5448,7 @@ namespace Illuminate\Support\Facades {
          */
         public static function hasSeparateLockStore()
         {
-            /** @var \Illuminate\Cache\DatabaseStore $instance */
+            /** @var \Illuminate\Cache\ArrayStore $instance */
             return $instance->hasSeparateLockStore();
         }
 
@@ -25337,6 +25274,7 @@ namespace Illuminate\View {
         /**
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $data
+         * @return static
          * @static
          */
         public static function layoutData($data = [])
@@ -25347,6 +25285,7 @@ namespace Illuminate\View {
         /**
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $section
+         * @return static
          * @static
          */
         public static function section($section)
@@ -25357,6 +25296,7 @@ namespace Illuminate\View {
         /**
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $title
+         * @return static
          * @static
          */
         public static function title($title)
@@ -25367,6 +25307,7 @@ namespace Illuminate\View {
         /**
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $slot
+         * @return static
          * @static
          */
         public static function slot($slot)
@@ -25378,6 +25319,7 @@ namespace Illuminate\View {
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $view
          * @param mixed $params
+         * @return static
          * @static
          */
         public static function extends($view, $params = [])
@@ -25389,6 +25331,7 @@ namespace Illuminate\View {
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param mixed $view
          * @param mixed $params
+         * @return static
          * @static
          */
         public static function layout($view, $params = [])
@@ -25399,6 +25342,7 @@ namespace Illuminate\View {
         /**
          * @see \Livewire\Features\SupportPageComponents\SupportPageComponents::registerLayoutViewMacros()
          * @param callable $callback
+         * @return static
          * @static
          */
         public static function response($callback)
