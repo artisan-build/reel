@@ -113,6 +113,7 @@ function waitForPostgresLock(Process $process, ConnectionInterface $connection, 
     $waitType = null;
 
     do {
+        $connection->statement('SELECT pg_stat_clear_snapshot()');
         $value = $connection->table('pg_stat_activity')
             ->where('application_name', $applicationName)
             ->value('wait_event_type');
