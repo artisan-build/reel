@@ -19,6 +19,8 @@ const R1_CHROME_BINARY = '/Applications/Google Chrome.app/Contents/MacOS/Google 
 const R1_BROWSER_RUNNER = 'tests/Live/run-r1-browser.mjs';
 const R1_DIAGNOSTIC_MAX_BYTES = 4096;
 const R1_DIAGNOSTIC_MAX_LINES = 40;
+const R1_SERVER_LOG_READ_MAX_BYTES = 256 * 1024;
+const R1_SERVER_ERROR_MAX_LINES = 20;
 const R1_FOCUSED_TESTS = [
     'tests/Feature/ApplicationEnrollmentTest.php',
     'tests/Feature/ApplicationManagementTest.php',
@@ -85,6 +87,26 @@ function r1Diagnostic(string $output, array $environment): string
     return $truncated ? $marker.ltrim($output) : $output;
 }
 
+function r1NewestServerError(string $log): string
+{
+    $recordPattern = '/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s+[A-Za-z0-9_.-]+\.ERROR:/m';
+    if (preg_match_all($recordPattern, $log, $errors, PREG_OFFSET_CAPTURE) < 1) {
+        return '';
+    }
+
+    /** @var array{0: string, 1: int} $newestError */
+    $newestError = $errors[0][array_key_last($errors[0])];
+    $record = substr($log, $newestError[1]);
+    $nextRecordPattern = '/\n(?=\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s+[A-Za-z0-9_.-]+\.[A-Z]+:)/';
+    if (preg_match($nextRecordPattern, $record, $nextRecord, PREG_OFFSET_CAPTURE) === 1) {
+        $record = substr($record, 0, $nextRecord[0][1]);
+    }
+
+    $leadingLines = implode("\n", array_slice(explode("\n", trim($record)), 0, R1_SERVER_ERROR_MAX_LINES));
+
+    return substr($leadingLines, 0, R1_DIAGNOSTIC_MAX_BYTES);
+}
+
 /** @param array<string, string> $environment */
 function r1ServerDiagnostic(
     string $applicationDirectory,
@@ -96,10 +118,10 @@ function r1ServerDiagnostic(
     $logSize = is_file($logPath) ? filesize($logPath) : false;
 
     if (is_int($logSize) && $logSize > 0) {
-        $readBytes = R1_DIAGNOSTIC_MAX_BYTES * 4;
+        $readBytes = R1_SERVER_LOG_READ_MAX_BYTES;
         $log = file_get_contents($logPath, false, null, max(0, $logSize - $readBytes), $readBytes);
         if (is_string($log) && trim($log) !== '') {
-            return r1Diagnostic($log, $environment);
+            return r1Diagnostic(r1NewestServerError($log), $environment);
         }
     }
 
@@ -500,19 +522,34 @@ if (in_array('--self-check', $argv, true)) {
             r1Fail('The live runner self-check could not prove bounded redacted diagnostics for both output channels.');
         }
     }
+    $serverLog = "[2026-09-15 11:59:59] production.ERROR: OlderSelfCheckException\n#0 older frame\n".
+        "[2026-09-15 12:00:00] production.ERROR: NewestSelfCheckException\n".
+        "/tmp/reel-r1-live-deadbeef/candidate/storage/logs/laravel.log\n".
+        implode("\n", array_map(static fn (int $frame): string => "#{$frame} newest frame", range(0, 80)))."\n".
+        "[2026-09-15 12:00:01] production.INFO: LaterSelfCheckRecord\n";
     $serverDiagnostic = r1Diagnostic(
-        "production.ERROR: SelfCheckException\n".
-        "/tmp/reel-r1-live-deadbeef/candidate/storage/logs/laravel.log\n",
+        r1NewestServerError($serverLog),
         [],
     );
-    if (! str_contains($serverDiagnostic, 'SelfCheckException')
-        || str_contains($serverDiagnostic, 'reel-r1-live-deadbeef')) {
-        r1Fail('The live runner self-check could not prove server diagnostic redaction.');
+    if (! str_contains($serverDiagnostic, 'NewestSelfCheckException')
+        || ! str_contains($serverDiagnostic, '#0 newest frame')
+        || str_contains($serverDiagnostic, 'OlderSelfCheckException')
+        || str_contains($serverDiagnostic, '#80 newest frame')
+        || str_contains($serverDiagnostic, 'LaterSelfCheckRecord')
+        || str_contains($serverDiagnostic, 'reel-r1-live-deadbeef')
+        || strlen($serverDiagnostic) > R1_DIAGNOSTIC_MAX_BYTES
+        || substr_count($serverDiagnostic, "\n") >= R1_DIAGNOSTIC_MAX_LINES) {
+        r1Fail('The live runner self-check could not prove bounded newest-error selection and redaction.');
+    }
+    if (r1Diagnostic(r1NewestServerError('[2026-09-15 12:00:02] production.INFO: No error'), []) !== '[no output]') {
+        r1Fail('The live runner self-check requires invalid server diagnostics to fail closed.');
     }
     foreach ([
         'function r1ServerDiagnostic(',
+        'function r1NewestServerError(',
         "'/storage/logs/laravel.log'",
-        'R1_DIAGNOSTIC_MAX_BYTES * 4',
+        'R1_SERVER_LOG_READ_MAX_BYTES',
+        'R1_SERVER_ERROR_MAX_LINES',
         'r1ServerDiagnostic($app, $environment, $runDirectory)',
         'server diagnostic:',
     ] as $requiredServerDiagnosticSource) {
