@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Enums\RecordingSessionStatus;
+use App\Jobs\DeleteUserErasureBatch;
+use App\Models\Application;
+use App\Models\RecordingSession;
+use App\Models\UserErasureAudit;
 use ArtisanBuild\BuiltForCloud\AuthorityMode;
 use ArtisanBuild\BuiltForCloud\InstallationAuthority;
 use ArtisanBuild\BuiltForCloud\ManagedAuthClient;
@@ -14,16 +19,20 @@ use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 
 require_once __DIR__.'/../../vendor/artisan-build/built-for-cloud/tests/Fixtures/ManagedAuthorityFixture.php';
 
-function configureReelManagedAuthority(): ManagedAuthorityFixture
+function configureReelManagedAuthority(int $generation = 7, ?string $secret = null): ManagedAuthorityFixture
 {
-    $secret = bin2hex(random_bytes(32));
+    static $activeFixture;
+
+    $secret ??= bin2hex(random_bytes(32));
     DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->update([
         'mode' => AuthorityMode::Managed->value,
-        'generation' => 7,
+        'generation' => $generation,
         'issuer' => 'https://issuer.example.test',
         'connection_id' => 'reel-connection-fixture',
         'organization_id' => 'reel-organization-fixture',
@@ -32,18 +41,35 @@ function configureReelManagedAuthority(): ManagedAuthorityFixture
     ]);
     config(['built-for-cloud.managed.client_secret' => $secret]);
 
-    $fixture = new ManagedAuthorityFixture(
+    $activeFixture = new ManagedAuthorityFixture(
         'https://authority.example.test',
         $secret,
         'https://issuer.example.test',
         'reel-connection-fixture',
         'reel-organization-fixture',
         'reel-installation-fixture',
-        7,
+        $generation,
     );
-    Http::fake(fn (ClientRequest $request): mixed => $fixture->respond($request));
+    if ($generation === 7) {
+        Http::fake(static function (ClientRequest $request) use (&$activeFixture): mixed {
+            return $activeFixture->respond($request);
+        });
+    }
 
-    return $fixture;
+    return $activeFixture;
+}
+
+function enterReelManagedSession(ManagedAuthorityFixture $fixture, string $code): User
+{
+    $handoff = beginReelManagedHandoff();
+    test()->withSession([ManagedHandoff::SESSION_NONCE_KEY => $handoff['nonce']])
+        ->get(route('bfc.managed.callback', [
+            'state' => $handoff['state'],
+            'code' => $code,
+        ], absolute: false))
+        ->assertRedirect('/');
+
+    return User::query()->where('scalpels_id', 'subject-fixture')->sole();
 }
 
 /** @return array{state: string, nonce: string, session_id: string} */
@@ -193,4 +219,127 @@ it('enforces the exact managed refresh and grace boundaries through Reel dashboa
     expect(reelManagedConfirmationCalls($fixture))->toBe(2)
         ->and(auth('web')->check())->toBeFalse()
         ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBeNull();
+});
+
+it('applies managed role and ordering changes on the next Reel request', function (): void {
+    $fixture = configureReelManagedAuthority();
+    $fixture->exchangeOverrides = ['role' => 'admin'];
+    $user = enterReelManagedSession($fixture, 'managed-ordering-code');
+
+    expect($user->role)->toBe('admin');
+
+    $fixture->confirmationOverrides = ['role' => 'member'];
+    CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+    $user->refresh();
+    expect($user->role)->toBe('member')
+        ->and($user->managed_membership_roster_version)->toBe(9)
+        ->and($user->managed_membership_response_sequence)->toBe(14)
+        ->and(auth('web')->id())->toBe($user->getKey());
+
+    $fixture->confirmationOverrides = ['role' => 'admin'];
+    CarbonImmutable::setTestNow('2026-09-15T12:10:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+    $user->refresh();
+    expect($user->role)->toBe('admin')
+        ->and($user->managed_membership_roster_version)->toBe(10)
+        ->and($user->managed_membership_response_sequence)->toBe(15)
+        ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
+
+    DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->update([
+        'managed_connection_roster_version' => 8,
+        'managed_connection_response_sequence' => 13,
+    ]);
+    $fixture->confirmationOverrides = [
+        'role' => 'member',
+        'roster_version' => 9,
+        'response_sequence' => 14,
+    ];
+    CarbonImmutable::setTestNow('2026-09-15T12:15:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+    $user->refresh();
+    $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
+    expect($user->role)->toBe('admin')
+        ->and($user->managed_membership_roster_version)->toBe(10)
+        ->and($user->managed_membership_response_sequence)->toBe(15)
+        ->and($authority?->managed_connection_roster_version)->toBe(9)
+        ->and($authority?->managed_connection_response_sequence)->toBe(14);
+
+    $nextGeneration = configureReelManagedAuthority(
+        8,
+        (string) config('built-for-cloud.managed.client_secret'),
+    );
+    $nextGeneration->confirmationOverrides = [
+        'role' => 'member',
+        'roster_version' => 1,
+        'response_sequence' => 1,
+    ];
+    CarbonImmutable::setTestNow('2026-09-15T12:20:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+    $user->refresh();
+    $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
+    expect(reelManagedConfirmationCalls($fixture))->toBe(3)
+        ->and(reelManagedConfirmationCalls($nextGeneration))->toBe(1)
+        ->and($user->managed_membership_generation)->toBe(8)
+        ->and($user->managed_membership_roster_version)->toBe(1)
+        ->and($user->managed_membership_response_sequence)->toBe(1)
+        ->and($user->role)->toBe('member')
+        ->and($authority?->managed_connection_generation)->toBe(8)
+        ->and($authority?->managed_connection_response_sequence)->toBe(1)
+        ->and(auth('web')->id())->toBe($user->getKey());
+});
+
+it('ends a removed managed session before Reel state can mutate', function (): void {
+    Storage::fake('local');
+    Queue::fake();
+    $fixture = configureReelManagedAuthority();
+    $user = enterReelManagedSession($fixture, 'managed-removal-code');
+    $application = Application::factory()->create(['name' => 'Removal boundary application']);
+    $credential = activeReelCredential($application);
+    $object = "reel/chunks/{$application->public_id}/removal-session/chunk.gz";
+    Storage::disk('local')->put($object, 'test-created-object');
+    $recording = new RecordingSession;
+    $recording->fill([
+        'application_id' => $application->getKey(),
+        'application_credential_id' => $credential->getKey(),
+        'session_id' => str_repeat('a', 64),
+        'grant_id_hash' => str_repeat('b', 64),
+        'origin' => 'https://removal.example.test',
+        'protocol_version' => 1,
+        'max_chunks' => 10,
+        'max_compressed_bytes' => 1000,
+        'max_chunk_bytes' => 500,
+        'started_at' => now(),
+        'max_event_time' => now(),
+        'upload_cutoff_at' => now()->addMinute(),
+    ]);
+    $recording->forceFill(['status' => RecordingSessionStatus::Ready])->save();
+    $credentialCount = DB::table('credentials')->count();
+
+    $fixture->confirmationOverrides = ['membership_status' => 'removed'];
+    CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
+    $this->get(route('dashboard'))->assertRedirect(route('bfc.login'));
+    $user->refresh();
+    expect(auth('web')->check())->toBeFalse()
+        ->and($user->status)->toBe('inactive');
+
+    $this->get(route('admin.applications.create'))->assertRedirect(route('bfc.login'));
+    $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.login'));
+    $this->post(route('sessions.protection.store', [$application, $recording]))->assertRedirect(route('bfc.login'));
+    $this->delete(route('admin.sessions.destroy', [$application, $recording]))->assertRedirect(route('bfc.login'));
+    $this->post(route('admin.application-users.destroy', $application), [
+        'application_user_id' => 'removed-actor-subject',
+        'confirmation' => 'removed-actor-subject',
+    ])->assertRedirect(route('bfc.login'));
+
+    $recording->refresh();
+    expect(Application::query()->whereKey($application->getKey())->value('name'))->toBe('Removal boundary application')
+        ->and(DB::table('credentials')->count())->toBe($credentialCount)
+        ->and($credential->fresh()->revoked_at)->toBeNull()
+        ->and($recording->status)->toBe(RecordingSessionStatus::Ready)
+        ->and($recording->protected_at)->toBeNull()
+        ->and($recording->protectionEvents()->count())->toBe(0)
+        ->and(UserErasureAudit::query()->count())->toBe(0);
+    Storage::disk('local')->assertExists($object);
+    Queue::assertNotPushed(DeleteUserErasureBatch::class);
 });

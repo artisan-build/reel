@@ -501,6 +501,7 @@ it('keeps opaque protection attribution through authority changes, rotation, rem
     $actor = User::factory()->create();
     $otherMember = User::factory()->create();
     $administrator = User::factory()->admin()->create();
+    $owner = User::factory()->owner()->create();
     $stableActorId = 'reel-actor-'.Str::lower(Str::random(20));
     $session = makeRetentionSession();
     $credential = Credential::query()->findOrFail($session->application_credential_id);
@@ -527,6 +528,10 @@ it('keeps opaque protection attribution through authority changes, rotation, rem
     $departed = makeRetentionSession();
     $protection->protect($departed->getKey(), $managed);
     expect($protection->unprotect($departed->getKey(), testIdentity($administrator)))->toBeTrue();
+
+    $ownerCleared = makeRetentionSession();
+    $protection->protect($ownerCleared->getKey(), $managed);
+    expect($protection->unprotect($ownerCleared->getKey(), testIdentity($owner)))->toBeTrue();
 });
 
 it('denies invalid package actors before protection mutation', function (array $attributes): void {
