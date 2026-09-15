@@ -208,7 +208,7 @@ it('composes every session filter from the URL without reading replay objects', 
         'metadata' => [],
     ]);
     ReplayView::query()->create([
-        'user_id' => $viewer->getKey(),
+        'actor_id' => (string) $viewer->getKey(),
         'application_id' => $application->getKey(),
         'recording_session_id' => $matching->getKey(),
         'viewed_at' => now(),
@@ -338,7 +338,7 @@ it('discriminates each session list predicate independently', function (string $
         $query['marker'] = 'matching-marker';
     } elseif ($case === 'watched-yes') {
         ReplayView::query()->create([
-            'user_id' => $viewer->getKey(),
+            'actor_id' => (string) $viewer->getKey(),
             'application_id' => $matching->application_id,
             'recording_session_id' => $matching->getKey(),
             'viewed_at' => now(),
@@ -346,7 +346,7 @@ it('discriminates each session list predicate independently', function (string $
         $query['watched'] = 'yes';
     } elseif ($case === 'watched-no') {
         ReplayView::query()->create([
-            'user_id' => $viewer->getKey(),
+            'actor_id' => (string) $viewer->getKey(),
             'application_id' => $other->application_id,
             'recording_session_id' => $other->getKey(),
             'viewed_at' => now(),
@@ -516,7 +516,7 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
         ->and($content)->toContain("default-src &#039;none&#039;; script-src &#039;nonce-{$firstNonce[1]}&#039;; style-src &#039;unsafe-inline&#039;")
         ->and($content)->toContain('Visible safe content');
     $views = ReplayView::query()
-        ->where('user_id', $viewer->getKey())
+        ->where('actor_id', (string) $viewer->getKey())
         ->where('recording_session_id', $session->getKey())
         ->get();
     expect($views)->toHaveCount(2)

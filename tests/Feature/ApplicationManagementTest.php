@@ -85,7 +85,9 @@ it('creates an application and displays its enrollment code exactly once', funct
         ->and($credential->status)->toBe(CredentialStatus::Pending)
         ->and($credential->toArray())->not->toContain($code);
 
-    $firstDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
+    $firstDisplay = $this->get(route('admin.applications.show', $application))
+        ->assertOk()
+        ->assertSee('data-testid="application-signing-credentials"', false);
 
     expect($firstDisplay->getContent())->toContain($code);
 

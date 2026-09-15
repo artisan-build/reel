@@ -144,12 +144,10 @@ not strictly related to the work at hand.**
   browser recorder in PRD §6 ships as a *precompiled* asset; building it must not add a Node step to
   this application's install or deploy.
 - Scaffolded from `artisan-build/laravel-nodeless` at commit `6181182` (Laravel 13.12, Livewire 4,
-  Flux 2.14, Fortify, Pest 4, PHPStan/Larastan level 6). The kit's own `CLAUDE.md`, `.solo/`, and
+  Flux 2.14, the original auth scaffold, Pest 4, PHPStan/Larastan level 6). The kit's own `CLAUDE.md`, `.solo/`, and
   starter-kit `export-ignore` rules were deliberately NOT carried over.
-- `artisan-build/built-for-cloud` (^0.3, the BfC token + auth foundation) is NOT installed yet. It is
-  PRD §16 step 1 work. When installing it: it augments the existing `users` table rather than owning
-  it, so its guarded `is_admin` migration must run after the app's users migration, `is_admin` must be
-  cast to boolean on `App\Models\User`, and it must stay OUT of `$fillable`.
+- `artisan-build/built-for-cloud` owns Reel's human auth, authority, and installation credential
+  lifecycle. Reel remains a thin host and must not add a parallel user model, role flag, or credential store.
 - Laravel Cloud injects configuration for Cloud-provisioned resources into a separate managed env
   file. Never set env vars for a Cloud-provisioned resource — including connection selectors like
   `DB_CONNECTION`, `QUEUE_CONNECTION`, `CACHE_STORE` — or you shadow the injected value.

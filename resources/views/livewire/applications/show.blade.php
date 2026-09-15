@@ -75,7 +75,7 @@
         </form>
     </section>
 
-    <section class="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900">
+    <section class="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900" data-testid="application-signing-credentials">
         <div class="flex items-start justify-between gap-4">
             <div>
                 <flux:heading>{{ __('Signing credentials') }}</flux:heading>

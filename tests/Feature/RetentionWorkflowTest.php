@@ -5,7 +5,6 @@ declare(strict_types=1);
 use App\Enums\RecordingSessionStatus;
 use App\Events\OrphanObjectEligible;
 use App\Exceptions\RetentionRejected;
-use App\Http\Controllers\ApplicationUserErasureController;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
 use App\Models\RecordingSession;
@@ -20,17 +19,14 @@ use App\Services\SessionFinalizer;
 use App\Services\UserErasure;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Process\Process;
 use Tests\Support\User;
 
@@ -265,9 +261,13 @@ it('never schedules unprotected deletion before a later ordinary expiry', functi
         ->and($session->delete_not_before->isAfter($session->unprotected_at->addHours(72)))->toBeTrue();
 });
 
-it('prevents ordinary deletion while an administrator immediately overrides protection and cooling', function (): void {
+it('allows each package role to immediately delete despite protection and cooling', function (string $role): void {
     $owner = User::factory()->create();
-    $administrator = User::factory()->admin()->create();
+    $operator = match ($role) {
+        'owner' => User::factory()->owner()->create(),
+        'admin' => User::factory()->admin()->create(),
+        'member' => User::factory()->create(),
+    };
     $session = makeRetentionSession([
         'protected_at' => now(),
         'protected_by' => $owner->getKey(),
@@ -279,17 +279,12 @@ it('prevents ordinary deletion while an administrator immediately overrides prot
         'recordingSession' => $session,
     ]);
 
-    $this->actingAs($owner)->delete($route)->assertForbidden();
-    expect($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($session->fresh()->protected_by)->toBe((string) $owner->getKey());
-    Storage::disk('local')->assertExists($object);
-
-    $this->actingAs($administrator)->delete($route)->assertRedirect(route('sessions.index'));
+    $this->actingAs($operator)->delete($route)->assertRedirect(route('sessions.index'));
     expect($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
-        ->and($session->fresh()->deletion_actor_id)->toBe($administrator->getKey())
-        ->and($session->fresh()->deletion_reason)->toBe('administrator_deleted');
+        ->and($session->fresh()->deletion_actor_id)->toBe((string) $operator->getKey())
+        ->and($session->fresh()->deletion_reason)->toBe('operator_deleted');
     Storage::disk('local')->assertMissing($object);
-});
+})->with(['owner', 'admin', 'member']);
 
 it('requires exact erasure confirmation and audits a batch without the erased user id', function (): void {
     Queue::fake();
@@ -363,10 +358,13 @@ it('requires exact erasure confirmation and audits a batch without the erased us
     Storage::disk('local')->assertMissing($protectedObject)->assertMissing($ordinaryObject);
 });
 
-it('holds every user-erasure administrator boundary and preserves data after forbidden attempts', function (): void {
+it('denies guest erasure before mutation and allows each package role to erase application-user history', function (string $role): void {
     Queue::fake();
-    $administrator = User::factory()->admin()->create();
-    $viewer = User::factory()->create();
+    $operator = match ($role) {
+        'owner' => User::factory()->owner()->create(),
+        'admin' => User::factory()->admin()->create(),
+        'member' => User::factory()->create(),
+    };
     $application = Application::factory()->create();
     $applicationUserId = 'authorization-target';
     $session = makeRetentionSession([
@@ -377,43 +375,20 @@ it('holds every user-erasure administrator boundary and preserves data after for
     $route = route('admin.application-users.destroy', ['application' => $application]);
     $payload = ['application_user_id' => $applicationUserId, 'confirmation' => $applicationUserId];
 
-    $this->post($route, $payload)->assertRedirect(route('login'));
-    $this->actingAs($viewer)->post($route, $payload)->assertForbidden();
-
-    expect($administrator->getKey())->not->toBe($viewer->getKey())
-        ->and($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($session->fresh()->erasure_batch_id)->toBeNull()
-        ->and(UserErasureAudit::query()->count())->toBe(0)
-        ->and(Route::getRoutes()->getByName('admin.application-users.destroy')?->gatherMiddleware())
-        ->toContain('admin');
-    Storage::disk('local')->assertExists($object);
-    Queue::assertNothingPushed();
-
-    $request = Request::create($route, 'POST', $payload);
-    $request->setUserResolver(fn (): User => $viewer);
-    $service = Mockery::mock(UserErasure::class);
-    $service->shouldNotReceive('erase');
-
-    try {
-        (new ApplicationUserErasureController)($request, $application, $service);
-        $this->fail('The erasure controller accepted an ordinary viewer.');
-    } catch (HttpException $exception) {
-        expect($exception->getStatusCode())->toBe(403);
-    }
-
-    try {
-        resolve(UserErasure::class)->erase($application, $applicationUserId, testIdentity($viewer), true);
-        $this->fail('The erasure service accepted an ordinary viewer.');
-    } catch (RetentionRejected $rejection) {
-        expect($rejection->reason)->toBe('administrator_required')
-            ->and($rejection->httpStatus)->toBe(403);
-    }
-
+    $this->post($route, $payload)->assertRedirect(route('bfc.login'));
     expect($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
         ->and($session->fresh()->erasure_batch_id)->toBeNull()
         ->and(UserErasureAudit::query()->count())->toBe(0);
     Storage::disk('local')->assertExists($object);
-});
+    Queue::assertNothingPushed();
+
+    $this->actingAs($operator)->post($route, $payload)->assertRedirect();
+
+    $audit = UserErasureAudit::query()->sole();
+    expect($audit->actor_id)->toBe((string) $operator->getKey())
+        ->and($session->fresh()->erasure_batch_id)->toBe($audit->batch_id);
+    Queue::assertPushed(DeleteUserErasureBatch::class);
+})->with(['owner', 'admin', 'member']);
 
 it('serializes only the opaque batch id and lets an expired unique lock be re-dispatched', function (): void {
     config()->set('queue.default', 'database');

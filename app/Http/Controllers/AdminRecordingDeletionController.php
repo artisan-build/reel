@@ -20,7 +20,7 @@ class AdminRecordingDeletionController extends Controller
         $actor = app(IdentityContext::class);
         abort_unless($actor->canUseProduct(), 403);
 
-        if (! $deletion->delete($session->getKey(), 'administrator_deleted', $actor)) {
+        if (! $deletion->delete($session->getKey(), 'operator_deleted', $actor)) {
             return back()->withErrors(['retention' => 'recording_deletion_incomplete']);
         }
 
