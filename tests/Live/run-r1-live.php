@@ -231,6 +231,24 @@ function r1Ready(int $port, string $path): bool
     }
 }
 
+function r1PassedPestResult(string $output): bool
+{
+    try {
+        $result = json_decode(trim($output), true, flags: JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        return false;
+    }
+
+    return is_array($result)
+        && ! array_is_list($result)
+        && ($result['tool'] ?? null) === 'pest'
+        && ($result['result'] ?? null) === 'passed'
+        && is_int($result['tests'] ?? null)
+        && $result['tests'] > 0
+        && is_int($result['passed'] ?? null)
+        && $result['passed'] === $result['tests'];
+}
+
 /** @param array<string, string> $environment */
 function r1FocusedTests(string $app, array $environment): array
 {
@@ -242,8 +260,8 @@ function r1FocusedTests(string $app, array $environment): array
         1200,
     );
 
-    if (! str_contains($output, 'Tests:')) {
-        r1Fail('The focused test process returned no Pest result.');
+    if (! r1PassedPestResult($output)) {
+        r1Fail('The focused test process returned no valid passing Pest result.');
     }
 
     return ['files' => R1_FOCUSED_TESTS, 'result' => 'pass'];
@@ -386,6 +404,22 @@ if (in_array('--self-check', $argv, true)) {
     foreach ($requiredFocusedTests as $requiredFocusedTest) {
         if (! is_file($root.'/'.$requiredFocusedTest)) {
             r1Fail('The live runner self-check cannot find '.$requiredFocusedTest.'.');
+        }
+    }
+    if (! r1PassedPestResult('{"tool":"pest","result":"passed","tests":9,"passed":9,"assertions":41}')) {
+        r1Fail('The live runner self-check requires machine-readable Pest success recognition.');
+    }
+    foreach ([
+        '',
+        '{',
+        '{"tool":"phpunit","result":"passed","tests":9,"passed":9}',
+        '{"tool":"pest","result":"failed","tests":9,"passed":8}',
+        '{"tool":"pest","result":"passed","tests":0,"passed":0}',
+        '{"tool":"pest","result":"passed","tests":9,"passed":8}',
+        '{"tool":"pest","result":"passed","tests":"9","passed":9}',
+    ] as $invalidPestResult) {
+        if (r1PassedPestResult($invalidPestResult)) {
+            r1Fail('The live runner self-check requires fail-closed Pest result recognition.');
         }
     }
     $redisEnvironment = r1RedisEnvironment(16379, 'reel-r1-self-check-');
