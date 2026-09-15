@@ -13,7 +13,14 @@ require __DIR__.'/../../vendor/autoload.php';
 
 const R1_POSTGRES_IMAGE = 'postgres:17-alpine';
 const R1_REDIS_IMAGE = 'redis:7-alpine';
-const R1_MINIO_IMAGE = 'minio/minio:RELEASE.2025-04-22T22-12-26Z';
+const R1_MINIO_IMAGE = 'quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z';
+const R1_FOCUSED_TESTS = [
+    'tests/Feature/ApplicationEnrollmentTest.php',
+    'tests/Feature/ApplicationManagementTest.php',
+    'tests/Feature/ManagedAuthIngressTest.php',
+    'tests/Feature/RecordingChunkIngestTest.php',
+    'tests/Feature/RetentionWorkflowTest.php',
+];
 
 /** @return never */
 function r1Fail(string $message): void
@@ -139,14 +146,8 @@ function r1Ready(int $port, string $path): bool
 /** @param array<string, string> $environment */
 function r1FocusedTests(string $app, array $environment): array
 {
-    $files = [
-        'tests/Feature/ApplicationEnrollmentTest.php',
-        'tests/Feature/ManagedAuthIngressTest.php',
-        'tests/Feature/RecordingChunkIngestTest.php',
-        'tests/Feature/RetentionWorkflowTest.php',
-    ];
     $output = r1Run(
-        [PHP_BINARY, 'artisan', 'test', ...$files, '--stop-on-failure'],
+        [PHP_BINARY, 'artisan', 'test', ...R1_FOCUSED_TESTS, '--stop-on-failure'],
         $app,
         $environment,
         'isolated R1 focused tests',
@@ -157,7 +158,7 @@ function r1FocusedTests(string $app, array $environment): array
         r1Fail('The focused test process returned no Pest result.');
     }
 
-    return ['files' => $files, 'result' => 'pass'];
+    return ['files' => R1_FOCUSED_TESTS, 'result' => 'pass'];
 }
 
 $root = dirname(__DIR__, 2);
@@ -174,6 +175,24 @@ $expectedCases = [
 
 if (in_array('--self-check', $argv, true)) {
     $source = (string) file_get_contents(__FILE__);
+    $requiredFocusedTests = [
+        'tests/Feature/ApplicationEnrollmentTest.php',
+        'tests/Feature/ApplicationManagementTest.php',
+        'tests/Feature/ManagedAuthIngressTest.php',
+        'tests/Feature/RecordingChunkIngestTest.php',
+        'tests/Feature/RetentionWorkflowTest.php',
+    ];
+    if (R1_MINIO_IMAGE !== 'quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z') {
+        r1Fail('The live runner self-check requires the pinned Quay MinIO image.');
+    }
+    if ($requiredFocusedTests !== R1_FOCUSED_TESTS) {
+        r1Fail('The live runner self-check requires the complete R1 focused test selection.');
+    }
+    foreach ($requiredFocusedTests as $requiredFocusedTest) {
+        if (! is_file($root.'/'.$requiredFocusedTest)) {
+            r1Fail('The live runner self-check cannot find '.$requiredFocusedTest.'.');
+        }
+    }
     foreach (['create-admin', '--local', 'reel:smoke', 'schedule:run', '127.0.0.1', 'finally'] as $required) {
         if (! str_contains($source, $required)) {
             r1Fail('The live runner self-check is missing '.$required.'.');
