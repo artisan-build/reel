@@ -59,11 +59,11 @@ expect()->extend('toBeOne', fn () => $this->toBe(1));
 /**
  * @return array{public: string, private: string}
  */
-function testRsaKeyPair(): array
+function testRsaKeyPair(bool $fresh = false): array
 {
     static $pair;
 
-    if (is_array($pair)) {
+    if (! $fresh && is_array($pair)) {
         return $pair;
     }
 
@@ -82,7 +82,13 @@ function testRsaKeyPair(): array
         throw new RuntimeException('Unable to inspect the test RSA key pair.');
     }
 
-    return $pair = ['public' => $details['key'], 'private' => $private];
+    $generated = ['public' => $details['key'], 'private' => $private];
+
+    if (! $fresh) {
+        $pair = $generated;
+    }
+
+    return $generated;
 }
 
 /** @return array{credential: Credential, code: string} */

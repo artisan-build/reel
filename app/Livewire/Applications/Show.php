@@ -11,7 +11,6 @@ use ArtisanBuild\BuiltForCloud\Actions\RotateCredential;
 use ArtisanBuild\BuiltForCloud\AuditActor;
 use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
-use ArtisanBuild\BuiltForCloud\CredentialManagementScope;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialSummary;
 use ArtisanBuild\BuiltForCloud\MintOptions;
@@ -79,7 +78,13 @@ class Show extends Component
     {
         $scope = ReelCredentialScope::for($this->application());
 
-        return app(ListCredentials::class)($scope->subject, CredentialManagementScope::memberInstallation());
+        return array_values(array_filter(
+            app(ListCredentials::class)($scope->subject),
+            static fn (CredentialSummary $credential): bool => $credential->kind === CredentialKind::Asymmetric
+                && $credential->purpose === CredentialPurpose::Signing
+                && $credential->subjectType === $scope->subject->type
+                && $credential->subjectRef === $scope->subject->ref,
+        ));
     }
 
     public function updateApplication(): void
@@ -122,11 +127,13 @@ class Show extends Component
     {
         abort_unless($identity->canUseProduct(), 403);
         $application = $this->application();
+        abort_unless(collect($this->credentials())->contains(
+            static fn (CredentialSummary $credential): bool => $credential->id === $credentialId,
+        ), 404);
         $result = $rotate(
             $credentialId,
             new RotateOptions(codeTtlSeconds: 900),
             AuditActor::boundUser($identity->actorId()),
-            CredentialManagementScope::memberInstallation(),
         );
 
         abort_unless($result !== null, 404);
@@ -148,12 +155,14 @@ class Show extends Component
     public function revokeCredential(string $credentialId, RevokeCredential $revoke, IdentityContext $identity): void
     {
         abort_unless($identity->canUseProduct(), 403);
+        abort_unless(collect($this->credentials())->contains(
+            static fn (CredentialSummary $credential): bool => $credential->id === $credentialId,
+        ), 404);
         $scope = ReelCredentialScope::for($this->application());
         $outcome = $revoke(
             $credentialId,
             AuditActor::boundUser($identity->actorId()),
             $scope->subject,
-            CredentialManagementScope::memberInstallation(),
         );
         abort_if($outcome === RevokeOutcome::NotFound, 404);
 

@@ -6,6 +6,8 @@ use App\Enums\RecordingSessionStatus;
 use App\Events\OrphanObjectEligible;
 use App\Exceptions\RetentionRejected;
 use App\Jobs\DeleteUserErasureBatch;
+use App\Livewire\Applications\Create as CreateApplication;
+use App\Livewire\Applications\Show as ShowApplication;
 use App\Models\Application;
 use App\Models\RecordingSession;
 use App\Models\UserErasureAudit;
@@ -17,6 +19,12 @@ use App\Services\ReplayManifest;
 use App\Services\RetentionDiagnostics;
 use App\Services\SessionFinalizer;
 use App\Services\UserErasure;
+use ArtisanBuild\BuiltForCloud\AuthorityMode;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialOwnership;
+use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
+use ArtisanBuild\BuiltForCloud\UserRole;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Artisan;
@@ -27,6 +35,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
+use Livewire\Livewire;
 use Symfony\Component\Process\Process;
 use Tests\Support\User;
 
@@ -389,6 +398,157 @@ it('denies guest erasure before mutation and allows each package role to erase a
         ->and($session->fresh()->erasure_batch_id)->toBe($audit->batch_id);
     Queue::assertPushed(DeleteUserErasureBatch::class);
 })->with(['owner', 'admin', 'member']);
+
+it('drives each package role through the Reel application and retention flow after real package login', function (string $role): void {
+    Queue::fake();
+    $operator = match ($role) {
+        'owner' => User::factory()->owner()->create(),
+        'admin' => User::factory()->admin()->create(),
+        'member' => User::factory()->create(),
+    };
+
+    $this->post('/bfc/login', [
+        'email' => $operator->email,
+        'password' => 'test-created-password',
+    ])->assertRedirect(route('bfc.ui.home', absolute: false));
+    $this->get(route('dashboard'))->assertOk();
+
+    Livewire::test(CreateApplication::class)
+        ->set('form.name', "{$role} application")
+        ->set('form.allowedOrigins', "https://{$role}.example.test")
+        ->set('form.samplingPercent', 35)
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $application = Application::query()->sole();
+    $first = Credential::query()->where('subject_ref', 'application:'.$application->public_id)->sole();
+    $firstCode = session('enrollment.code');
+    expect($firstCode)->toBeString()->not->toBeEmpty();
+
+    $initialEnrollment = $this->postJson('/bfc/asymmetric-enrollments/'.$application->public_id, [
+        'enrollment_code' => $firstCode,
+        'public_key' => testRsaKeyPair()['public'],
+    ]);
+    $this->assertSame(201, $initialEnrollment->status(), 'Initial application credential enrollment failed.');
+    $initialEnrollment->assertJson(['credential_id' => $first->id, 'algorithm' => 'RS256']);
+
+    $settings = Livewire::test(ShowApplication::class, ['application' => $application])
+        ->assertSee($first->id)
+        ->set('form.samplingPercent', 45)
+        ->call('updateApplication')
+        ->assertHasNoErrors()
+        ->call('rotateCredential', $first->id)
+        ->assertHasNoErrors();
+
+    $replacement = Credential::query()->where('id', '!=', $first->id)->sole();
+    $replacementCode = session('enrollment.code');
+    expect($application->fresh()->sampling_percent)->toBe(45)
+        ->and($application->fresh()->ingest_enabled)->toBeTrue()
+        ->and($replacementCode)->toBeString()->not->toBeEmpty();
+
+    $replacementEnrollment = $this->postJson('/bfc/asymmetric-enrollments/'.$application->public_id, [
+        'enrollment_code' => $replacementCode,
+        'public_key' => testRsaKeyPair(fresh: true)['public'],
+    ]);
+    $this->assertSame(201, $replacementEnrollment->status(), 'Replacement application credential enrollment failed.');
+    $replacementEnrollment->assertJson(['credential_id' => $replacement->id]);
+    Livewire::test(ShowApplication::class, ['application' => $application])
+        ->call('revokeCredential', $first->id)
+        ->assertHasNoErrors()
+        ->call('toggleIngest')
+        ->assertHasNoErrors();
+    expect($first->fresh()->revoked_at)->not->toBeNull()
+        ->and($replacement->fresh()->status)->toBe(CredentialStatus::Active)
+        ->and($application->fresh()->ingest_enabled)->toBeFalse();
+
+    $session = makeRetentionSession(['application' => $application]);
+    $sessionRoute = [
+        'application' => $application,
+        'recordingSession' => $session,
+    ];
+    $this->get(route('sessions.show', $sessionRoute))->assertOk();
+    $this->post(route('sessions.protection.store', $sessionRoute))->assertRedirect();
+    $this->post(route('sessions.protection.store', $sessionRoute))->assertRedirect();
+    expect($session->fresh()->protected_by)->toBe((string) $operator->getKey())
+        ->and($session->protectionEvents()->where('action', 'protected')->count())->toBe(1);
+    $this->delete(route('sessions.protection.destroy', $sessionRoute))->assertRedirect();
+    expect($session->fresh()->protected_at)->toBeNull();
+
+    $deletion = makeRetentionSession(['application' => $application]);
+    $this->delete(route('admin.sessions.destroy', [
+        'application' => $application,
+        'recordingSession' => $deletion,
+    ]))->assertRedirect(route('sessions.index'));
+    expect($deletion->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
+        ->and($deletion->fresh()->deletion_actor_id)->toBe((string) $operator->getKey());
+
+    $applicationUserId = "{$role}-application-user";
+    $erasure = makeRetentionSession([
+        'application' => $application,
+        'application_user_id' => $applicationUserId,
+    ]);
+    $this->post(route('admin.application-users.destroy', ['application' => $application]), [
+        'application_user_id' => $applicationUserId,
+        'confirmation' => $applicationUserId,
+    ])->assertRedirect();
+    $audit = UserErasureAudit::query()->sole();
+    expect($audit->actor_id)->toBe((string) $operator->getKey())
+        ->and($erasure->fresh()->erasure_batch_id)->toBe($audit->batch_id);
+    Queue::assertPushed(DeleteUserErasureBatch::class);
+})->with(['owner', 'admin', 'member']);
+
+it('keeps opaque protection attribution through authority changes, rotation, removal, and rejoin', function (): void {
+    $actor = User::factory()->create();
+    $otherMember = User::factory()->create();
+    $administrator = User::factory()->admin()->create();
+    $stableActorId = 'reel-actor-'.Str::lower(Str::random(20));
+    $session = makeRetentionSession();
+    $credential = Credential::query()->findOrFail($session->application_credential_id);
+    $managed = new DomainIdentityContext($stableActorId, UserRole::Member, AuthorityMode::Managed, 7, CredentialOwnership::Account);
+    $standalone = new DomainIdentityContext($stableActorId, UserRole::Member, AuthorityMode::Standalone, 8, CredentialOwnership::Account);
+    $rejoined = new DomainIdentityContext($stableActorId, UserRole::Member, AuthorityMode::Managed, 9, CredentialOwnership::Account);
+    $protection = resolve(RecordingProtection::class);
+
+    expect($protection->protect($session->getKey(), $managed))->toBeTrue()
+        ->and($protection->protect($session->getKey(), $standalone))->toBeFalse();
+    $this->actingAs($actor);
+    Livewire::test(ShowApplication::class, ['application' => $session->application])
+        ->call('rotateCredential', $credential->id)
+        ->assertHasNoErrors();
+    expect($session->fresh()->protected_by)->toBe($stableActorId)
+        ->and($session->protectionEvents()->where('action', 'protected')->count())->toBe(1);
+
+    $actor->delete();
+    expect($session->fresh()->protected_by)->toBe($stableActorId)
+        ->and(fn () => $protection->unprotect($session->getKey(), testIdentity($otherMember)))
+        ->toThrow(RetentionRejected::class, 'protection_owned_by_another_user')
+        ->and($protection->unprotect($session->getKey(), $rejoined))->toBeTrue();
+
+    $departed = makeRetentionSession();
+    $protection->protect($departed->getKey(), $managed);
+    expect($protection->unprotect($departed->getKey(), testIdentity($administrator)))->toBeTrue();
+});
+
+it('denies invalid package actors before protection mutation', function (array $attributes): void {
+    Queue::fake();
+    $actor = User::factory()->create($attributes);
+    $session = makeRetentionSession();
+    $object = $session->manifest['objects'][0]['key'];
+
+    $this->actingAs($actor)->post(route('sessions.protection.store', [
+        'application' => $session->application,
+        'recordingSession' => $session,
+    ]))->assertForbidden();
+
+    expect($session->fresh()->protected_at)->toBeNull()
+        ->and($session->protectionEvents()->count())->toBe(0)
+        ->and(UserErasureAudit::query()->count())->toBe(0);
+    Storage::disk('local')->assertExists($object);
+    Queue::assertNothingPushed();
+})->with([
+    'unknown role' => [['role' => 'unknown-role']],
+    'removed actor' => [['status' => 'removed']],
+]);
 
 it('serializes only the opaque batch id and lets an expired unique lock be re-dispatched', function (): void {
     config()->set('queue.default', 'database');

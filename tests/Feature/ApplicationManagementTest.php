@@ -7,7 +7,10 @@ use App\Livewire\Applications\Create;
 use App\Livewire\Applications\Show;
 use App\Models\Application;
 use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialKind;
+use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\SubjectType;
 use Illuminate\Database\QueryException;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\DB;
@@ -159,6 +162,33 @@ it('scopes credential mutations through their owning application', function (): 
         ->assertNotFound();
 
     expect($credentialB->refresh()->status)->toBe(CredentialStatus::Active);
+});
+
+it('limits custom credential management to exact Reel signing credentials without generic self-service admission', function (): void {
+    $member = User::factory()->create();
+    $application = Application::factory()->create();
+    $signing = activeReelCredential($application);
+    $otherPurpose = Credential::query()->create([
+        'kind' => CredentialKind::Bearer,
+        'purpose' => CredentialPurpose::SystemDeployment,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'application:'.$application->public_id,
+        'name' => 'not-reel-signing',
+        'secret_hash' => hash('sha256', 'test-created-non-signing-secret'),
+    ]);
+
+    $this->actingAs($member);
+    Livewire::test(Show::class, ['application' => $application])
+        ->assertSee($signing->id)
+        ->assertDontSee($otherPurpose->id)
+        ->call('rotateCredential', $otherPurpose->id)
+        ->assertNotFound();
+    Livewire::test(Show::class, ['application' => $application])
+        ->call('revokeCredential', $otherPurpose->id)
+        ->assertNotFound();
+
+    expect($otherPurpose->fresh()->rotated_at)->toBeNull()
+        ->and($otherPurpose->fresh()->revoked_at)->toBeNull();
 });
 
 it('exposes application Livewire actions to Members', function (): void {
