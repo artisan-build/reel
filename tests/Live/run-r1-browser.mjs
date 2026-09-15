@@ -208,12 +208,16 @@ async function login(roleCase, password) {
     })()`);
     if (!submitted) throw new Error('Package login form was unavailable.');
 
-    await waitFor(
-        () => evaluate(`document.readyState === 'complete'
-            && location.pathname === '/bfc/ui'
-            && Boolean(document.querySelector('[data-testid="ui-shell"]'))`),
-        `Package login did not complete for ${roleCase.role}.`,
-    );
+    try {
+        await waitFor(
+            () => evaluate(`document.readyState === 'complete'
+                && location.pathname === '/bfc/ui'
+                && Boolean(document.querySelector('[data-testid="ui-shell"]'))`),
+            `Package login did not complete for ${roleCase.role}.`,
+        );
+    } catch {
+        throw new NavigationDiagnosticError(`Package login did not complete for ${roleCase.role}: ${await navigationDiagnostic('/bfc/ui', '[data-testid="ui-shell"]')}`);
+    }
 }
 
 async function proveRole(roleCase) {

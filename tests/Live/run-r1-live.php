@@ -605,6 +605,8 @@ if (in_array('--self-check', $argv, true)) {
         'document_request_failed:',
         'cdp_socket_open:',
         'chrome_running:',
+        "navigationDiagnostic('/bfc/ui', '[data-testid=\"ui-shell\"]')",
+        'Package login did not complete for ${roleCase.role}:',
         'process.stderr.write(`${failure.message}\\n`)',
     ] as $requiredBrowserSource) {
         if (! str_contains($browserSource, $requiredBrowserSource)) {
