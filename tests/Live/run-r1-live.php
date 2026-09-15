@@ -626,8 +626,8 @@ try {
     r1Run([PHP_BINARY, 'artisan', 'migrate:fresh', '--force', '--no-interaction'], $app, $environment, 'fresh live migration');
 
     $package = r1LockedPackage($app.'/composer.lock', 'artisan-build/built-for-cloud');
-    if (($package['version'] ?? null) !== 'v0.13.1'
-        || ($package['source']['reference'] ?? null) !== '3e014bf08d336e3f1ea2592a3f8e13591105f44b') {
+    if (($package['version'] ?? null) !== 'v0.13.2'
+        || ($package['source']['reference'] ?? null) !== '7a8169c544d5227b244950e1eb13c331d9f6f96e') {
         r1Fail('The live archive did not install the frozen published BfC artifact.');
     }
     $cases['published_bfc_lock'] = 'pass';

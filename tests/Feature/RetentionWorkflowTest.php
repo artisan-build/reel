@@ -312,10 +312,10 @@ it('requires exact erasure confirmation and audits a batch without the erased us
     $ordinaryObject = $ordinary->manifest['objects'][0]['key'];
     $route = route('admin.application-users.destroy', ['application' => $application]);
 
-    $this->actingAs($administrator)->post($route, [
+    $this->actingAs($administrator)->postJson($route, [
         'application_user_id' => $erasedId,
         'confirmation' => 'wrong-user',
-    ])->assertUnprocessable()->assertSee('erasure_confirmation_required');
+    ])->assertUnprocessable()->assertJsonPath('message', 'erasure_confirmation_required');
     expect($protected->fresh()->status)->toBe(RecordingSessionStatus::Ready)
         ->and($protected->fresh()->protected_by)->not->toBeNull()
         ->and(UserErasureAudit::query()->count())->toBe(0);
