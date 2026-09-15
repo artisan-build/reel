@@ -6,11 +6,15 @@ use App\Enums\CaptureSeverity;
 use App\Livewire\Applications\Create;
 use App\Livewire\Applications\Show;
 use App\Models\Application;
+use App\Services\ReelCredentialScope;
+use ArtisanBuild\BuiltForCloud\Actions\CompleteAsymmetricEnrollment;
 use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\Exceptions\AsymmetricEnrollmentUnavailable;
 use ArtisanBuild\BuiltForCloud\OnboardingToken;
+use ArtisanBuild\BuiltForCloud\Rs256PublicKey;
 use ArtisanBuild\BuiltForCloud\SubjectType;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\RedisStore;
@@ -412,10 +416,11 @@ it('reissues lost pending delivery from its active predecessor exactly once', fu
         ->and(serialize($reissue->snapshot))->not->toContain($replacementCode)
         ->and(Credential::query()->where('status', CredentialStatus::Pending)->whereNull('revoked_at')->count())->toBe(1);
     expectEnrollmentCodeNotPersisted($replacementCode, $logs);
-    $this->postJson('/bfc/asymmetric-enrollments/'.$application->public_id, [
-        'enrollment_code' => $abandonedCode,
-        'public_key' => testRsaKeyPair(fresh: true)['public'],
-    ])->assertNotFound();
+    expect(fn () => resolve(CompleteAsymmetricEnrollment::class)(
+        $abandonedCode,
+        ReelCredentialScope::for($application),
+        new Rs256PublicKey(testRsaKeyPair(fresh: true)['public']),
+    ))->toThrow(AsymmetricEnrollmentUnavailable::class);
 
     Livewire::test(Show::class, ['application' => $application])
         ->call('reissuePendingCredential', $source->id)
