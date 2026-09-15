@@ -118,6 +118,28 @@ function r1Environment(array $overrides = []): array
     return array_merge($environment, $overrides);
 }
 
+/** @return array<string, string> */
+function r1RedisEnvironment(int $port, string $prefix): array
+{
+    return [
+        'REDIS_CLIENT' => 'phpredis',
+        'REDIS_URL' => 'null',
+        'REDIS_HOST' => '127.0.0.1',
+        'REDIS_USERNAME' => 'null',
+        'REDIS_PASSWORD' => 'null',
+        'REDIS_PORT' => (string) $port,
+        'REDIS_DB' => '0',
+        'REDIS_CACHE_DB' => '1',
+        'REDIS_CLUSTER' => 'redis',
+        'REDIS_PREFIX' => $prefix.'redis-',
+        'REDIS_PERSISTENT' => 'false',
+        'REDIS_MAX_RETRIES' => '3',
+        'REDIS_BACKOFF_ALGORITHM' => 'decorrelated_jitter',
+        'REDIS_BACKOFF_BASE' => '100',
+        'REDIS_BACKOFF_CAP' => '1000',
+    ];
+}
+
 /** @return array<string, mixed> */
 function r1Json(string $contents, string $label): array
 {
@@ -255,6 +277,26 @@ if (in_array('--self-check', $argv, true)) {
         if (! is_file($root.'/'.$requiredFocusedTest)) {
             r1Fail('The live runner self-check cannot find '.$requiredFocusedTest.'.');
         }
+    }
+    $redisEnvironment = r1RedisEnvironment(16379, 'reel-r1-self-check-');
+    if ($redisEnvironment !== [
+        'REDIS_CLIENT' => 'phpredis',
+        'REDIS_URL' => 'null',
+        'REDIS_HOST' => '127.0.0.1',
+        'REDIS_USERNAME' => 'null',
+        'REDIS_PASSWORD' => 'null',
+        'REDIS_PORT' => '16379',
+        'REDIS_DB' => '0',
+        'REDIS_CACHE_DB' => '1',
+        'REDIS_CLUSTER' => 'redis',
+        'REDIS_PREFIX' => 'reel-r1-self-check-redis-',
+        'REDIS_PERSISTENT' => 'false',
+        'REDIS_MAX_RETRIES' => '3',
+        'REDIS_BACKOFF_ALGORITHM' => 'decorrelated_jitter',
+        'REDIS_BACKOFF_BASE' => '100',
+        'REDIS_BACKOFF_CAP' => '1000',
+    ]) {
+        r1Fail('The live runner self-check requires the complete explicit disposable Redis environment.');
     }
     $diagnosticEnvironment = [
         'DB_DATABASE' => 'self_check_database_should_not_escape',
@@ -420,11 +462,7 @@ try {
         'SESSION_CONNECTION' => 'default',
         'SESSION_COOKIE' => $prefix.'session',
         'QUEUE_CONNECTION' => 'redis',
-        'REDIS_CLIENT' => 'phpredis',
-        'REDIS_HOST' => '127.0.0.1',
-        'REDIS_PORT' => (string) $redisPort,
-        'REDIS_DB' => '0',
-        'REDIS_CACHE_DB' => '1',
+        ...r1RedisEnvironment($redisPort, $prefix),
         'REDIS_QUEUE' => $prefix.'queue',
         'REDIS_QUEUE_RETRY_AFTER' => '90',
         'FILESYSTEM_DISK' => 's3',
