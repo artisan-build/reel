@@ -26,6 +26,7 @@ use ArtisanBuild\BuiltForCloud\CredentialStatus;
 use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
 use ArtisanBuild\BuiltForCloud\UserRole;
 use ArtisanBuild\ReelClient\Envelope;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -104,6 +105,27 @@ function makeRetentionSession(array $attributes = []): RecordingSession
     $session->forceFill([...$values, 'status' => $status])->save();
 
     return $session->fresh(['application']);
+}
+
+function waitForPostgresLock(Process $process, ConnectionInterface $connection, string $applicationName): ?string
+{
+    $deadline = hrtime(true) + 5_000_000_000;
+    $waitType = null;
+
+    do {
+        $value = $connection->table('pg_stat_activity')
+            ->where('application_name', $applicationName)
+            ->value('wait_event_type');
+        $waitType = is_string($value) ? $value : null;
+
+        if ($waitType === 'Lock' || ! $process->isRunning()) {
+            return $waitType;
+        }
+
+        Sleep::usleep(25_000);
+    } while (hrtime(true) < $deadline);
+
+    return $waitType;
 }
 
 beforeEach(function (): void {
@@ -990,10 +1012,7 @@ PHP);
         'PGAPPNAME' => 'reel-retention-race',
     ]);
     $process->start();
-    Sleep::usleep(500_000);
-    $waitType = $connection->table('pg_stat_activity')
-        ->where('application_name', 'reel-retention-race')
-        ->value('wait_event_type');
+    $waitType = waitForPostgresLock($process, $connection, 'reel-retention-race');
     expect($process->isRunning())->toBeTrue('Protection process exited before the deletion lock was released.')
         ->and($waitType)->toBe('Lock');
     $connection->commit();
@@ -1083,10 +1102,7 @@ PHP);
         'PGAPPNAME' => 'reel-retention-protection-race',
     ]);
     $process->start();
-    Sleep::usleep(500_000);
-    $waitType = $connection->table('pg_stat_activity')
-        ->where('application_name', 'reel-retention-protection-race')
-        ->value('wait_event_type');
+    $waitType = waitForPostgresLock($process, $connection, 'reel-retention-protection-race');
     expect($process->isRunning())->toBeTrue('Deletion did not wait on the protection row lock.')
         ->and($waitType)->toBe('Lock');
     $connection->commit();
