@@ -583,6 +583,8 @@ if (in_array('--self-check', $argv, true)) {
         'browser-evidence.json',
         'application-signing-credentials',
         'retention-controls',
+        "location.pathname === '/'",
+        'data-testid="landing"',
         'secrets_recorded: false',
         'verifier_blocked: []',
         'rmSync(profile',

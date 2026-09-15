@@ -279,8 +279,8 @@ async function logout(roleCase) {
     if (!submitted) throw new Error(`Package logout was unavailable for ${roleCase.role}.`);
     await waitFor(
         () => evaluate(`document.readyState === 'complete'
-            && location.pathname === '/bfc/login'
-            && Boolean(document.querySelector('[data-testid="login-form"]'))`),
+            && location.pathname === '/'
+            && Boolean(document.querySelector('[data-testid="landing"]'))`),
         `Package logout did not complete for ${roleCase.role}.`,
     );
     await send('Network.clearBrowserCookies');
