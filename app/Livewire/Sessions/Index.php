@@ -6,6 +6,7 @@ use App\Enums\RecordingSessionStatus;
 use App\Models\Application;
 use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Contracts\View\View;
@@ -114,7 +115,7 @@ class Index extends Component
     #[Computed]
     public function sessions(): LengthAwarePaginator
     {
-        $viewerId = (int) auth()->id();
+        $viewerId = resolve(IdentityContext::class)->actorId();
         $query = RecordingSession::query()->with('application');
 
         $this->applyDateFilter($query, 'started_at', '>=', $this->startedFrom);
@@ -153,10 +154,10 @@ class Index extends Component
             ->whereNull('protected_at'));
         $query->when($this->watched === 'yes', fn (Builder $query): Builder => $query
             ->whereHas('replayViews', fn (Builder $views): Builder => $views
-                ->where('user_id', $viewerId)));
+                ->where('actor_id', $viewerId)));
         $query->when($this->watched === 'no', fn (Builder $query): Builder => $query
             ->whereDoesntHave('replayViews', fn (Builder $views): Builder => $views
-                ->where('user_id', $viewerId)));
+                ->where('actor_id', $viewerId)));
 
         return $query->latest('started_at')->paginate(25);
     }

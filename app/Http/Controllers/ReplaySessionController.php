@@ -18,7 +18,6 @@ class ReplaySessionController extends Controller
                 'epochs' => fn ($query) => $query->orderBy('ordinal'),
                 'markers' => fn ($query) => $query->orderBy('occurred_at'),
                 'protectionEvents' => fn ($query) => $query->orderBy('occurred_at'),
-                'protectionOwner',
                 'transitions' => fn ($query) => $query->orderBy('transitioned_at'),
             ])
             ->firstOrFail();

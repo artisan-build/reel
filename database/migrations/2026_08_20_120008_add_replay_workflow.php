@@ -22,7 +22,7 @@ return new class extends Migration
             $table->string('release_id')->nullable();
             $table->unsignedInteger('duration_seconds')->nullable();
             $table->timestamp('protected_at')->nullable();
-            $table->foreignId('protected_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('protected_by')->nullable();
 
             $table->index('application_id', 'recording_sessions_application_id_idx');
             $table->index('started_at', 'recording_sessions_started_at_idx');
@@ -66,14 +66,14 @@ SQL);
 
         Schema::create('replay_views', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->string('actor_id');
             $table->foreignId('application_id')->constrained()->cascadeOnDelete();
             $table->foreignId('recording_session_id')->constrained()->cascadeOnDelete();
             $table->timestamp('viewed_at');
             $table->timestamps();
 
             $table->index(
-                ['user_id', 'recording_session_id'],
+                ['actor_id', 'recording_session_id'],
                 'replay_views_user_session_idx',
             );
             $table->index(
@@ -108,7 +108,7 @@ SQL);
             $table->dropIndex('recording_sessions_release_id_idx');
             $table->dropIndex('recording_sessions_status_idx');
             $table->dropIndex('recording_sessions_protected_at_idx');
-            $table->dropConstrainedForeignId('protected_by');
+            $table->dropColumn('protected_by');
             $table->dropColumn([
                 'initial_path',
                 'latest_path',

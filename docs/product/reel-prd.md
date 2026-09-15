@@ -57,7 +57,7 @@ second implementation to discard.
 - **Support/operator:** find a session by time, path, application user id, or reported problem and share an
   authenticated Reel link with an engineer.
 - **Product owner:** spot-check a newly released workflow without buying a general analytics suite.
-- **Application administrator:** configure capture, privacy, allowed origins, retention, and access.
+- **Reel operator:** configure capture, privacy, allowed origins, retention, and access under any valid package role.
 
 ### Core jobs
 
@@ -159,8 +159,8 @@ The manifest must be validated against Reel's actual configuration immediately b
 - Session list/search, metadata/timeline, and playback with pause, seek, speed, and inactivity skipping.
 - Error/custom markers and provider-neutral Laravel/Nightwatch correlation.
 - Thirty-day retention, protect/unprotect, manual deletion, and deletion by application user id.
-- Authenticated operator UI, invitations, admin authorization, and replay-view/delete audit records using
-  the existing Built for Cloud auth conventions.
+- Package-owned authenticated operator UI, invitations, Owner/Admin/Member authority, and opaque replay-view/
+  delete attribution using the Built for Cloud auth lifecycle.
 - Operational status sufficient to run a private production pilot.
 
 ### v0.1 excludes
@@ -186,8 +186,9 @@ The manifest must be validated against Reel's actual configuration immediately b
 
 1. An authenticated catalog user selects experimental Reel and sees the warning/limitations.
 2. The control plane forks/connects the Reel repository and provisions its declared Cloud resources.
-3. Standard BfC bootstrap creates the first administrator without exposing a permanent bootstrap secret.
-4. The administrator signs in to the new Reel instance and creates an application.
+3. The standard BfC lifecycle establishes the first Owner without an app-owned bootstrap credential.
+4. The Owner enters the new Reel instance through the configured standalone or managed package flow and creates
+   an application.
 
 ### Connect a Laravel application
 
@@ -588,15 +589,15 @@ Reel owns correlation; observability providers consume it optionally.
 - Protecting records `protected_at`, `protected_by`, and an audit event. The first protection establishes its
   owner; protecting an already-protected session is a no-op and cannot replace `protected_by`.
 - Protected sessions remain until explicitly unprotected or manually deleted.
-- Only the user recorded in `protected_by` or an administrator may unprotect a session. If that user is deleted
-  or anonymized, only an administrator can unprotect it.
+- Only the stable opaque actor recorded in `protected_by`, an Admin, or an Owner may unprotect a session. Removal
+  preserves that actor id; a valid rejoin restores same-actor authority.
 - Unprotecting sets `delete_not_before = max(expires_at, unprotected_at + 72 hours)`. The UI warns before the
   action, then displays the actor and scheduled deletion time. Any authenticated user may re-protect during
-  cooling; that action becomes the new protection and owner. An administrator may still explicitly delete now.
-- Every protect/unprotect event records actor and timestamp and the session UI displays that user's information.
-  Deleted/anonymized users remain legible as such without silently erasing the historical action.
-- Administrators can delete any session immediately; ordinary authenticated viewers cannot delete sessions.
-- Administrators can delete all sessions for an application user id and receive an auditable result. This
+  cooling; that action becomes the new protection and owner. Any valid package role may still explicitly delete now.
+- Every protect/unprotect event records opaque actor id and timestamp without an auth-model foreign key.
+  Removed actors remain attributed without silently erasing the historical action.
+- Owner, Admin, and Member can delete any session immediately.
+- Owner, Admin, and Member can delete all sessions for an application user id and receive an auditable result. This
   erasure overrides protection/cooling only after explicit confirmation.
 - A user-id deletion audit retains actor, application, time, deleted counts/outcome, and an opaque deletion-
   batch id—not the erased user id. Active jobs are revoked and all matching temporary, candidate, and compacted
@@ -613,26 +614,21 @@ Reel owns correlation; observability providers consume it optionally.
 
 ## 13. Authentication and authorization
 
-Reuse the current Built for Cloud auth/authority conventions rather than inventing Reel-specific identity:
+Reel is a thin host for Built for Cloud authentication and authority. The package owns the canonical User,
+standalone login/logout/invitation/setup/reset/session lifecycle, managed correlated entry and freshness, and
+the closed Owner/Admin/Member roles. Reel has no duplicate local auth UI, role flag, legacy credential path,
+editable credential ACL, or app-owned human-auth schema. Self-service profile editing and account deletion are removed
+capabilities rather than locally rebuilt surfaces.
 
-- the application owns its `User` model and Fortify/login UI;
-- BfC augments it with invitations and the admin flag/authorization middleware;
-- standard ownership/claim and token authority endpoints remain available to the control plane; and
-- no login, invitation, signing private key, or upload token is written to logs.
+Owner, Admin, and Member share every Reel product, configuration, signing-credential, deletion, erasure, and
+diagnostic operation. Only unprotecting another actor is narrower: the original stable actor, an Admin, or an
+Owner can unprotect. Package member-management surfaces retain their package role distinctions. Existing
+`admin.*` route names are naming residue only and confer no Admin-only Reel policy.
 
-Initial permissions:
-
-| Capability | Authenticated viewer | Administrator |
-|---|---:|---:|
-| List and replay sessions | Yes | Yes |
-| Protect a session | Yes | Yes |
-| Unprotect own protection | Yes | Yes |
-| Unprotect another user's protection | No | Yes |
-| Configure applications/capture | No | Yes |
-| Rotate/revoke application credentials | No | Yes |
-| Delete sessions/user history | No | Yes |
-| Invite/manage users | No | Yes |
-| View ingest/retention diagnostics | Read-only | Full |
+Application signing uses installation-owned package credentials bound to fixed purpose
+`reel.application.signing`, installation, application, and ingest audience. Enrollment accepts only a
+single-use code and public key; the private key remains in the monitored host. No login, invitation,
+enrollment code, signing private key, or upload grant is written to logs.
 
 The Reel deployment is the trust and data-segregation boundary. Every authenticated user can list and replay
 every monitored application connected to that deployment; v0.1 has no user↔application memberships. Multiple
@@ -694,7 +690,7 @@ The dashboard and structured metrics must make these likely failure signatures d
 | Orphan-sweeper suspended/high-water status | Restore uncertainty where automatic deletion must remain disabled |
 
 Session diagnostics expose state history, epoch/chunk ranges, checksums, object/manifest presence, job attempts,
-and sanitized failure codes to administrators. Repair/reconcile commands are dry-run by default, idempotent,
+and sanitized failure codes to valid package roles. Repair/reconcile commands are dry-run by default, idempotent,
 prefix-scoped, and documented before the client pilot.
 
 Post-launch analysis is required, not optional polish. Establish the dashboard baseline before Artisan Build
@@ -711,7 +707,7 @@ state divergence or unexplained data loss remains.
 
 - Experimental Reel is absent from the public/front page and installable from the authenticated catalog.
 - Its catalog manifest provisions exactly the resources in §5 and a fresh deploy becomes healthy.
-- First-admin bootstrap, application creation, single-use enrollment, host-local key generation/public-key
+- Package first-Owner/managed entry, application creation, single-use enrollment, host-local key generation/public-key
   registration, installation, rotation, and disable are covered by end-to-end tests or an automated smoke run.
 - The Laravel helper builds an authenticated application-scoped session-filter URI from an Eloquent model or
   explicit user id without including name/email or granting access by possession of the URI.
@@ -782,8 +778,8 @@ state divergence or unexplained data loss remains.
 
 - Expired ordinary sessions are deleted; protected sessions survive the same sweep.
 - Protect racing with deletion has one deterministic safe result and cannot leave an untracked object.
-- Only the protecting user or an administrator can unprotect. Unprotecting at or near expiry waits at least 72
-  hours, advertises the scheduled deletion, and remains reversible through re-protection; admin deletion and
+- Only the stable protecting actor, an Admin, or an Owner can unprotect. Unprotecting at or near expiry waits at
+  least 72 hours, advertises the scheduled deletion, and remains reversible through re-protection; role-shared deletion and
   explicitly confirmed user-id erasure may proceed immediately and remove all referenced objects idempotently.
 - Object-store errors remain retryable and visible without falsely marking deletion complete.
 - An in-flight or duplicate compactor cannot publish after `deleting`; prefix reconciliation finds candidate,
@@ -797,7 +793,7 @@ state divergence or unexplained data loss remains.
 Build as one experimental product, but keep PRs independently reviewable and mergeable:
 
 1. **BfC application foundation:** repository, current BfC authority/auth, CI/static analysis, Cloud manifest,
-   experimental catalog entry, admin bootstrap, application/credential model.
+   experimental catalog entry, package lifecycle, application model, and package-bound signing credentials.
 2. **Recorder contract and Laravel client:** versioned envelope, prebuilt rrweb adapter, consent API, masking,
    session token, install/update commands, hostile privacy fixture.
 3. **Ingest and persistence:** authorization/limits/idempotency, chunk objects, metadata, queue compaction,
@@ -823,11 +819,11 @@ whole application.
 2. **Masking:** input/contenteditable masking is the mandatory minimum. Teams can only strengthen it through
    configuration; `all_text`, additional selectors, and additional blocked paths ship in v0.1. There is no
    baseline-weakening setting or unmask attribute.
-3. **Protection:** any authenticated user may protect a ready recording, which establishes that user as the
-   protection owner. Only that owner or an administrator may unprotect it; every action remains attributed in
+3. **Protection:** any valid package role may protect a ready recording, which establishes its stable actor as
+   the protection owner. Only that actor, an Admin, or an Owner may unprotect it; every action remains attributed in
    the audit/UI. Unprotecting sets deletion no earlier than both normal expiry and 72 hours after the action,
-   and any user may re-protect during cooling. Immediate deletion and confirmed user-id erasure remain admin-
-   only; once `deleting` begins, protection loses deterministically.
+   and any valid role may re-protect during cooling. Immediate deletion and confirmed user-id erasure are shared
+   across Owner/Admin/Member; once `deleting` begins, protection loses deterministically.
 4. **Promotion evidence:** dogfood at Artisan Build and pilot with the client who prompted the Contentsquare
    inquiry. Promote to active only if Reel is useful internally, solves that client's problem, and passes the
    technical/privacy graduation gates. Otherwise leave it experimental while evidence accumulates.

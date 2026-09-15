@@ -11,7 +11,6 @@ use App\Events\CompactionPublished;
 use App\Jobs\CleanupCompactionCandidate;
 use App\Jobs\CompactRecordingSession;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
@@ -39,7 +38,7 @@ function createCompactionFixture(
     RecordingSessionStatus $status = RecordingSessionStatus::Compacting,
 ): RecordingSession {
     $application = Application::factory()->create();
-    $credential = ApplicationCredential::factory()->for($application)->create();
+    $credential = activeReelCredential($application);
     $session = new RecordingSession;
     $session->fill([
         'application_id' => $application->getKey(),

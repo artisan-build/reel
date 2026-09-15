@@ -6,10 +6,8 @@ use App\Enums\RecordingSessionStatus;
 use App\Events\ReplayPayloadRead;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
 use App\Models\ReplayView;
-use App\Models\User;
 use App\Services\ReplayManifest;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +17,7 @@ use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\User;
 
 function replayJavaScriptCorePath(
     ?string $configured = null,
@@ -78,7 +77,7 @@ function makeReplaySession(array $events = [], array $attributes = []): Recordin
     $application = $attributes['application'] ?? Application::factory()->create();
     $status = $attributes['status'] ?? RecordingSessionStatus::Ready;
     unset($attributes['application'], $attributes['status']);
-    $credential = ApplicationCredential::factory()->for($application)->create();
+    $credential = activeReelCredential($application);
     $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
     $objectKey = "reel/chunks/{$application->public_id}/{$sessionId}/replay.jsonl.gz";
     $encoded = json_encode($events, JSON_THROW_ON_ERROR)."\n";
@@ -177,11 +176,11 @@ beforeEach(function (): void {
 it('allows every authenticated viewer to list and inspect sessions while blocking guests', function (): void {
     $session = makeReplaySession();
 
-    $this->get(route('sessions.index'))->assertRedirect(route('login'));
+    $this->get(route('sessions.index'))->assertRedirect(route('bfc.login'));
     $this->get(route('sessions.show', [
         'application' => $session->application,
         'recordingSession' => $session,
-    ]))->assertRedirect(route('login'));
+    ]))->assertRedirect(route('bfc.login'));
 
     $this->actingAs(User::factory()->create());
     $response = $this->get(route('sessions.show', [
@@ -209,7 +208,7 @@ it('composes every session filter from the URL without reading replay objects', 
         'metadata' => [],
     ]);
     ReplayView::query()->create([
-        'user_id' => $viewer->getKey(),
+        'actor_id' => (string) $viewer->getKey(),
         'application_id' => $application->getKey(),
         'recording_session_id' => $matching->getKey(),
         'viewed_at' => now(),
@@ -339,7 +338,7 @@ it('discriminates each session list predicate independently', function (string $
         $query['marker'] = 'matching-marker';
     } elseif ($case === 'watched-yes') {
         ReplayView::query()->create([
-            'user_id' => $viewer->getKey(),
+            'actor_id' => (string) $viewer->getKey(),
             'application_id' => $matching->application_id,
             'recording_session_id' => $matching->getKey(),
             'viewed_at' => now(),
@@ -347,7 +346,7 @@ it('discriminates each session list predicate independently', function (string $
         $query['watched'] = 'yes';
     } elseif ($case === 'watched-no') {
         ReplayView::query()->create([
-            'user_id' => $viewer->getKey(),
+            'actor_id' => (string) $viewer->getKey(),
             'application_id' => $other->application_id,
             'recording_session_id' => $other->getKey(),
             'viewed_at' => now(),
@@ -517,7 +516,7 @@ it('serves a valid replay under an exact default-deny CSP and records the attrib
         ->and($content)->toContain("default-src &#039;none&#039;; script-src &#039;nonce-{$firstNonce[1]}&#039;; style-src &#039;unsafe-inline&#039;")
         ->and($content)->toContain('Visible safe content');
     $views = ReplayView::query()
-        ->where('user_id', $viewer->getKey())
+        ->where('actor_id', (string) $viewer->getKey())
         ->where('recording_session_id', $session->getKey())
         ->get();
     expect($views)->toHaveCount(2)

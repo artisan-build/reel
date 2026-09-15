@@ -20,7 +20,8 @@ composer audit), green on a clean, committed SHA.
 
 ## Stack
 
-- PHP 8.3+ / Laravel 13, Livewire 4 + Flux, Fortify for auth, Pest 4, PHPStan/Larastan level 6.
+- PHP 8.3+ / Laravel 13, Livewire 4 + Flux, Built for Cloud unified auth, Pest 4,
+  PHPStan/Larastan level 6.
 - PostgreSQL. Tests run against a real `reel_app_test` database (`phpunit.xml`), not SQLite —
   production is Postgres on Cloud and the suite should not diverge from it.
 - **Nodeless: no Node, npm, Vite, or frontend build step. Do not introduce any.** Assets are handled

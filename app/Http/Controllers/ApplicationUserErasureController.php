@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\RetentionRejected;
 use App\Models\Application;
-use App\Models\User;
 use App\Services\UserErasure;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
@@ -17,8 +17,8 @@ class ApplicationUserErasureController extends Controller
             'application_user_id' => ['required', 'string', 'max:255'],
             'confirmation' => ['required', 'string', 'max:255'],
         ]);
-        $actor = $request->user();
-        abort_unless($actor instanceof User && $actor->is_admin, 403);
+        $actor = resolve(IdentityContext::class);
+        abort_unless($actor->canUseProduct(), 403);
         $confirmed = hash_equals($validated['application_user_id'], $validated['confirmation']);
 
         try {

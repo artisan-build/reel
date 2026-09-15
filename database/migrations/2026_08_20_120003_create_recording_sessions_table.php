@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('recording_sessions', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('application_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('application_credential_id')->constrained()->restrictOnDelete();
+            $table->uuid('application_credential_id');
             $table->char('session_id', 64);
             $table->string('grant_id_hash', 64);
             $table->string('origin');

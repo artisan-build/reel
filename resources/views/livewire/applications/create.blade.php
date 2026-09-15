@@ -5,6 +5,17 @@
         <flux:text class="mt-2">{{ __('Set the initial privacy and sampling policy. You will receive one short-lived enrollment code.') }}</flux:text>
     </div>
 
+    @if ($enrollmentCode && $createdApplicationId)
+        <section class="mb-8 rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-testid="enrollment-code">
+            <flux:heading>{{ __('Copy this enrollment code now') }}</flux:heading>
+            <flux:text class="mt-2">{{ __('It expires in 15 minutes and will never be shown again.') }}</flux:text>
+            <code class="mt-4 block overflow-x-auto rounded-lg bg-zinc-950 px-4 py-3 text-sm text-white" data-testid="enrollment-code-value">{{ $enrollmentCode }}</code>
+            <flux:button class="mt-4" :href="route('admin.applications.show', ['application' => $createdApplicationId])" wire:navigate>
+                {{ __('Open application settings') }}
+            </flux:button>
+        </section>
+    @endif
+
     <form wire:submit="save" class="space-y-6">
         <flux:input wire:model="form.name" :label="__('Name')" required autofocus />
 

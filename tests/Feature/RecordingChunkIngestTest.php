@@ -2,26 +2,40 @@
 
 declare(strict_types=1);
 
-use App\Enums\CredentialStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
-use App\Models\User;
 use App\Models\UserErasureAudit;
 use App\Services\ChunkPrivacyValidator;
+use App\Services\ReelCredentialScope;
 use App\Services\UserErasure;
+use ArtisanBuild\BuiltForCloud\Actions\CompleteAsymmetricEnrollment;
+use ArtisanBuild\BuiltForCloud\Actions\MintCredential;
+use ArtisanBuild\BuiltForCloud\Actions\RevokeCredential;
+use ArtisanBuild\BuiltForCloud\Actions\RotateCredential;
+use ArtisanBuild\BuiltForCloud\BoundCredentialScope;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialKind;
+use ArtisanBuild\BuiltForCloud\CredentialPurpose;
+use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\MintOptions;
+use ArtisanBuild\BuiltForCloud\RotateOptions;
+use ArtisanBuild\BuiltForCloud\Rs256PublicKey;
+use ArtisanBuild\BuiltForCloud\Subject;
+use ArtisanBuild\BuiltForCloud\SubjectType;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -30,10 +44,11 @@ use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Hmac\Sha256 as HmacSha256;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
+use Tests\Support\User;
 
 /**
  * @param  array<string, mixed>  $applicationOverrides
- * @return array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}
+ * @return array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}
  */
 function ingestContext(array $applicationOverrides = []): array
 {
@@ -43,12 +58,7 @@ function ingestContext(array $applicationOverrides = []): array
         ...$applicationOverrides,
     ]);
     $key = testRsaKeyPair();
-    $credential = ApplicationCredential::factory()->for($application)->create([
-        'public_key' => $key['public'],
-        'status' => CredentialStatus::Active,
-        'enrollment_code_hash' => null,
-        'enrolled_at' => now(),
-    ]);
+    $credential = activeReelCredential($application, $key);
 
     return [
         'application' => $application,
@@ -60,7 +70,7 @@ function ingestContext(array $applicationOverrides = []): array
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  array<string, mixed>  $overrides
  */
 function ingestGrant(array $context, array $overrides = []): string
@@ -90,7 +100,7 @@ function ingestGrant(array $context, array $overrides = []): string
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  array<string, mixed>  $overrides
  */
 function customIngestGrant(array $context, array $overrides = []): string
@@ -131,7 +141,7 @@ function customIngestGrant(array $context, array $overrides = []): string
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  */
 function symmetricIngestGrant(array $context): string
 {
@@ -188,7 +198,7 @@ function safeIngestEvents(?int $timestamp = null): array
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  list<array<string, mixed>>|null  $events
  * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
@@ -232,7 +242,88 @@ function postIngestEnvelope(array $envelope, string $origin = 'https://monitored
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{public: string, private: string}  $key
+ */
+function activeCredentialForScope(BoundCredentialScope $scope, array $key, ?DateTimeInterface $expiresAt = null): Credential
+{
+    $mint = resolve(MintCredential::class)(
+        $scope->subject,
+        new MintOptions(
+            kind: CredentialKind::Asymmetric,
+            purpose: CredentialPurpose::Signing,
+            codeTtlSeconds: 900,
+            expiresAt: $expiresAt,
+            boundScope: $scope,
+        ),
+    );
+    resolve(CompleteAsymmetricEnrollment::class)(
+        $mint->secret?->reveal() ?? throw new RuntimeException('Enrollment code was not delivered.'),
+        $scope,
+        new Rs256PublicKey($key['public']),
+    );
+
+    return Credential::query()->findOrFail($mint->summary->id);
+}
+
+/** @return array<string, mixed> */
+function ingestBoundaryState(): array
+{
+    $tables = [
+        'applications',
+        'credentials',
+        'credential_protocol_bindings',
+        'credential_audit_events',
+        'onboarding_tokens',
+        'recording_sessions',
+        'recording_epochs',
+        'recording_epoch_transitions',
+        'recording_chunks',
+        'recording_session_transitions',
+        'recording_markers',
+        'recording_protection_events',
+        'replay_views',
+        'retention_states',
+        'user_erasure_audits',
+        'ingest_rate_counters',
+        'operational_counters',
+        'jobs',
+    ];
+    $state = [];
+
+    foreach ($tables as $table) {
+        $state[$table] = DB::table($table)->get()
+            ->map(static fn (stdClass $row): array => (array) $row)
+            ->sortBy(static fn (array $row): string => json_encode($row, JSON_THROW_ON_ERROR))
+            ->values()
+            ->all();
+    }
+
+    $state['objects'] = collect(Storage::disk('local')->allFiles())
+        ->sort()
+        ->mapWithKeys(static fn (string $path): array => [$path => Storage::disk('local')->get($path)])
+        ->all();
+
+    return $state;
+}
+
+/**
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ */
+function expectRejectedBeforeIngestMutation(array $context): void
+{
+    Queue::fake();
+    $before = ingestBoundaryState();
+
+    postIngestEnvelope(ingestEnvelope($context))
+        ->assertUnauthorized()
+        ->assertJsonPath('reason', 'invalid_grant');
+
+    expect(ingestBoundaryState())->toBe($before);
+    Queue::assertNothingPushed();
+}
+
+/**
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  */
 function insertConcurrentTestSession(array $context): int
 {
@@ -487,6 +578,192 @@ it('rejects forged signatures before inserts queue dispatches or object writes',
     Queue::assertNothingPushed();
 });
 
+it('rejects every mismatched credential scope dimension before ingest mutation', function (string $dimension): void {
+    $application = Application::factory()->create([
+        'allowed_origins' => ['https://monitored.example'],
+    ]);
+    $expected = ReelCredentialScope::for($application);
+
+    if ($dimension === 'purpose') {
+        config()->set('built-for-cloud.credentials.app_purposes', [
+            ReelCredentialScope::PURPOSE => CredentialPurpose::Signing->value,
+            'other.application.signing' => CredentialPurpose::Signing->value,
+        ]);
+    }
+
+    $scope = match ($dimension) {
+        'purpose' => new BoundCredentialScope(
+            'other.application.signing',
+            $expected->subject,
+            $expected->installation,
+            $expected->application,
+            $expected->audience,
+        ),
+        'subject' => new BoundCredentialScope(
+            $expected->appPurpose,
+            new Subject(SubjectType::Installation, 'application:other'),
+            $expected->installation,
+            $expected->application,
+            $expected->audience,
+        ),
+        'installation routing reference' => new BoundCredentialScope(
+            $expected->appPurpose,
+            $expected->subject,
+            'other-installation',
+            $expected->application,
+            $expected->audience,
+        ),
+        'application' => new BoundCredentialScope(
+            $expected->appPurpose,
+            $expected->subject,
+            $expected->installation,
+            'other-application',
+            $expected->audience,
+        ),
+        'audience' => new BoundCredentialScope(
+            $expected->appPurpose,
+            $expected->subject,
+            $expected->installation,
+            $expected->application,
+            'other-audience',
+        ),
+    };
+    $key = testRsaKeyPair(true);
+    $credential = activeCredentialForScope($scope, $key);
+    $context = [
+        'application' => $application,
+        'credential' => $credential,
+        'key' => $key,
+        'session_id' => bin2hex(random_bytes(32)),
+        'origin' => 'https://monitored.example',
+    ];
+
+    expectRejectedBeforeIngestMutation($context);
+})->with(['purpose', 'subject', 'installation routing reference', 'application', 'audience']);
+
+it('rejects every unusable credential lifecycle state before ingest mutation', function (string $state): void {
+    $application = Application::factory()->create([
+        'allowed_origins' => ['https://monitored.example'],
+    ]);
+    $scope = ReelCredentialScope::for($application);
+    $key = testRsaKeyPair(true);
+
+    if ($state === 'pending') {
+        $pending = pendingReelCredential($application);
+        $credential = $pending['credential'];
+    } elseif ($state === 'unbound') {
+        $credential = Credential::factory()->asymmetric($key['public'])->create([
+            'subject_type' => SubjectType::Installation,
+            'subject_ref' => $scope->subject->ref,
+            'status' => CredentialStatus::Active,
+            'activated_at' => now(),
+        ]);
+    } else {
+        $expiresAt = $state === 'expired' ? now()->addMinute() : null;
+        $credential = activeCredentialForScope($scope, $key, $expiresAt);
+
+        if ($state === 'revoked') {
+            resolve(RevokeCredential::class)($credential->id);
+        } elseif ($state === 'expired') {
+            $this->travel(61)->seconds();
+        } else {
+            DB::table('credentials')->where('id', $credential->id)->update([
+                'public_key' => $key['public']."\n",
+            ]);
+            $credential->refresh();
+        }
+    }
+
+    $context = [
+        'application' => $application,
+        'credential' => $credential,
+        'key' => $key,
+        'session_id' => bin2hex(random_bytes(32)),
+        'origin' => 'https://monitored.example',
+    ];
+
+    expectRejectedBeforeIngestMutation($context);
+})->with(['pending', 'revoked', 'expired', 'unbound', 'noncanonical']);
+
+it('allows canonical overlap then cuts over through public rotation enrollment and revocation', function (): void {
+    Queue::fake();
+    $logs = [];
+    Log::listen(function (MessageLogged $event) use (&$logs): void {
+        $logs[] = [$event->level, $event->message, $event->context];
+    });
+    $context = ingestContext();
+    $first = $context['credential'];
+    $rotation = resolve(RotateCredential::class)(
+        $first->id,
+        new RotateOptions(codeTtlSeconds: 900),
+    ) ?? throw new RuntimeException('Rotation did not return a replacement.');
+    $second = Credential::query()->findOrFail($rotation->mint->summary->id);
+    $secondKey = testRsaKeyPair(true);
+    $secondContext = [
+        ...$context,
+        'credential' => $second,
+        'key' => $secondKey,
+        'session_id' => hash('sha256', 'pending-replacement'),
+    ];
+
+    expectRejectedBeforeIngestMutation($secondContext);
+
+    $enrollment = $this->postJson('/bfc/asymmetric-enrollments/'.$context['application']->public_id, [
+        'enrollment_code' => $rotation->mint->secret?->reveal(),
+        'public_key' => $secondKey['public'],
+    ])->assertCreated()->assertExactJson([
+        'credential_id' => $second->id,
+        'algorithm' => 'RS256',
+    ]);
+    $second->refresh();
+
+    $firstContext = [
+        ...$context,
+        'session_id' => hash('sha256', 'overlap-first'),
+    ];
+    $secondContext['session_id'] = hash('sha256', 'overlap-second');
+    $firstResponse = postIngestEnvelope(ingestEnvelope($firstContext, overrides: [
+        'grant' => ingestGrant($firstContext, ['grant_id' => 'overlap-first']),
+    ]))->assertAccepted()->assertExactJson(['accepted' => true, 'duplicate' => false]);
+    $secondResponse = postIngestEnvelope(ingestEnvelope($secondContext, overrides: [
+        'grant' => ingestGrant($secondContext, ['grant_id' => 'overlap-second']),
+    ]))->assertAccepted()->assertExactJson(['accepted' => true, 'duplicate' => false]);
+
+    resolve(RevokeCredential::class)($first->id);
+    $retiredContext = [
+        ...$firstContext,
+        'session_id' => hash('sha256', 'retired-first'),
+    ];
+    expectRejectedBeforeIngestMutation($retiredContext);
+
+    $secondContext['session_id'] = hash('sha256', 'surviving-second');
+    $survivorResponse = postIngestEnvelope(ingestEnvelope($secondContext, overrides: [
+        'grant' => ingestGrant($secondContext, ['grant_id' => 'surviving-second']),
+    ]))->assertAccepted()->assertExactJson(['accepted' => true, 'duplicate' => false]);
+
+    $surfaces = [
+        'responses' => [
+            $enrollment->getContent(),
+            $firstResponse->getContent(),
+            $secondResponse->getContent(),
+            $survivorResponse->getContent(),
+        ],
+        'logs' => $logs,
+        'database_and_objects' => ingestBoundaryState(),
+    ];
+
+    foreach ([$context['key']['private'], $secondKey['private']] as $privateKey) {
+        expect(str_contains(serialize($surfaces), $privateKey))->toBeFalse();
+    }
+
+    expect($first->refresh()->revoked_at)->not->toBeNull()
+        ->and($second->refresh()->status)->toBe(CredentialStatus::Active)
+        ->and($second->revoked_at)->toBeNull()
+        ->and(RecordingSession::query()->pluck('application_credential_id')->all())
+        ->toEqualCanonicalizing([$first->id, $second->id, $second->id]);
+    Queue::assertNothingPushed();
+});
+
 it('rejects each invalid grant binding before storage', function (Closure $mutate): void {
     $context = ingestContext();
     $envelope = ingestEnvelope($context);
@@ -552,7 +829,7 @@ it('rejects inactive application and credential state', function (string $state,
     if ($state === 'application') {
         $context['application']->update(['ingest_enabled' => false]);
     } else {
-        $context['credential']->update(['status' => CredentialStatus::Revoked, 'revoked_at' => now()]);
+        $context['credential']->update(['revoked_at' => now()]);
     }
 
     postIngestEnvelope($envelope)->assertStatus($status)->assertJsonPath('reason', $reason);
@@ -1387,30 +1664,28 @@ it('accepts a legal session transition and records it once', function (): void {
         ]);
 });
 
-it('rechecks and locks credential activity after decoding before persistence', function (): void {
+it('rechecks public credential revocation under the PostgreSQL ingest write lock', function (): void {
+    Queue::fake();
     $context = ingestContext();
     $credential = $context['credential'];
     $credentialQueries = [];
 
     $this->app->instance(ChunkPrivacyValidator::class, new class($credential) extends ChunkPrivacyValidator
     {
-        public function __construct(private readonly ApplicationCredential $credential) {}
+        public function __construct(private readonly Credential $credential) {}
 
         #[Override]
         public function validate(mixed $events): void
         {
             parent::validate($events);
-            $this->credential->update([
-                'status' => CredentialStatus::Revoked,
-                'revoked_at' => now(),
-            ]);
+            resolve(RevokeCredential::class)($this->credential->id);
         }
     });
 
     DB::listen(function (QueryExecuted $query) use (&$credentialQueries): void {
         $sql = strtolower($query->sql);
 
-        if (str_contains($sql, 'application_credentials')) {
+        if (str_contains($sql, 'credentials')) {
             $credentialQueries[] = $sql;
         }
     });
@@ -1419,9 +1694,11 @@ it('rechecks and locks credential activity after decoding before persistence', f
         ->assertUnauthorized()
         ->assertJsonPath('reason', 'inactive_credential');
 
-    expect(collect($credentialQueries)->contains(fn (string $sql): bool => str_contains($sql, 'for update')))->toBeTrue()
+    expect(DB::connection()->getDriverName())->toBe('pgsql')
+        ->and(collect($credentialQueries)->contains(fn (string $sql): bool => str_contains($sql, 'for update')))->toBeTrue()
         ->and(RecordingSession::query()->count())->toBe(0)
         ->and(Storage::disk('local')->allFiles())->toBeEmpty();
+    Queue::assertNothingPushed();
 });
 
 it('accepts only existing gap fills while closing and rejects all compacting uploads', function (): void {
@@ -1503,7 +1780,7 @@ it('erases a real session whose user and release metadata came only from its ver
     $audit = resolve(UserErasure::class)->erase(
         $context['application'],
         $applicationUserId,
-        $administrator,
+        testIdentity($administrator),
         true,
     );
     Queue::assertPushed(

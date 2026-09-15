@@ -1,5 +1,19 @@
 <?php
 
+use App\Models\Application;
+use App\Services\ReelCredentialScope;
+use ArtisanBuild\BuiltForCloud\Actions\CompleteAsymmetricEnrollment;
+use ArtisanBuild\BuiltForCloud\Actions\MintCredential;
+use ArtisanBuild\BuiltForCloud\AuditActor;
+use ArtisanBuild\BuiltForCloud\AuthorityMode;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialKind;
+use ArtisanBuild\BuiltForCloud\CredentialOwnership;
+use ArtisanBuild\BuiltForCloud\CredentialPurpose;
+use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
+use ArtisanBuild\BuiltForCloud\MintOptions;
+use ArtisanBuild\BuiltForCloud\Rs256PublicKey;
+use ArtisanBuild\BuiltForCloud\User as BuiltForCloudUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -45,11 +59,11 @@ expect()->extend('toBeOne', fn () => $this->toBe(1));
 /**
  * @return array{public: string, private: string}
  */
-function testRsaKeyPair(): array
+function testRsaKeyPair(bool $fresh = false): array
 {
     static $pair;
 
-    if (is_array($pair)) {
+    if (! $fresh && is_array($pair)) {
         return $pair;
     }
 
@@ -68,5 +82,64 @@ function testRsaKeyPair(): array
         throw new RuntimeException('Unable to inspect the test RSA key pair.');
     }
 
-    return $pair = ['public' => $details['key'], 'private' => $private];
+    $generated = ['public' => $details['key'], 'private' => $private];
+
+    if (! $fresh) {
+        $pair = $generated;
+    }
+
+    return $generated;
+}
+
+/** @return array{credential: Credential, code: string} */
+function pendingReelCredential(Application $application, ?AuditActor $actor = null): array
+{
+    $scope = ReelCredentialScope::for($application);
+    $mint = resolve(MintCredential::class)(
+        $scope->subject,
+        new MintOptions(
+            kind: CredentialKind::Asymmetric,
+            purpose: CredentialPurpose::Signing,
+            codeTtlSeconds: 900,
+            boundScope: $scope,
+        ),
+        $actor,
+    );
+
+    return [
+        'credential' => Credential::query()->findOrFail($mint->summary->id),
+        'code' => $mint->secret?->reveal() ?? throw new RuntimeException('Enrollment code was not delivered.'),
+    ];
+}
+
+/** @param array{public: string, private: string}|null $keyPair */
+function activeReelCredential(Application $application, ?array $keyPair = null): Credential
+{
+    $pending = pendingReelCredential($application);
+    $keyPair ??= testRsaKeyPair();
+    resolve(CompleteAsymmetricEnrollment::class)(
+        $pending['code'],
+        ReelCredentialScope::for($application),
+        new Rs256PublicKey($keyPair['public']),
+    );
+
+    return $pending['credential']->refresh();
+}
+
+function testIdentity(BuiltForCloudUser $user, ?string $actorId = null): DomainIdentityContext
+{
+    return new DomainIdentityContext(
+        $actorId ?? (string) $user->getKey(),
+        $user->status === 'active' ? $user->role : null,
+        AuthorityMode::Standalone,
+        1,
+        CredentialOwnership::Account,
+    );
+}
+
+function enrollmentCodeFromHtml(string $html): string
+{
+    preg_match('/data-testid="enrollment-code-value"[^>]*>([^<]+)</', $html, $matches);
+
+    return html_entity_decode($matches[1] ?? throw new RuntimeException('The immediate response did not contain an enrollment code.'));
 }

@@ -2,7 +2,13 @@
 
 namespace App\Providers;
 
-use App\Models\Application;
+use App\Services\ReelEnrollmentScopeResolver;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
+use ArtisanBuild\BuiltForCloud\Contracts\ResolvesAsymmetricEnrollmentScope;
+use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureUserIsAuthenticated;
+use ArtisanBuild\BuiltForCloud\InstallationAuthority;
+use ArtisanBuild\BuiltForCloud\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -11,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Livewire\Livewire;
 use RuntimeException;
 
 class AppServiceProvider extends ServiceProvider
@@ -21,7 +28,13 @@ class AppServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
-        //
+        $this->app->bind(ResolvesAsymmetricEnrollmentScope::class, ReelEnrollmentScopeResolver::class);
+        $this->app->scoped(IdentityContext::class, function (): IdentityContext {
+            $user = request()->user();
+            abort_unless($user instanceof User, 403);
+
+            return DomainIdentityContext::forUser($user, InstallationAuthority::current());
+        });
     }
 
     /**
@@ -29,6 +42,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Livewire::addPersistentMiddleware(EnsureUserIsAuthenticated::class);
         $this->ensureCacheStoreIsConfigured();
         $this->configureDefaults();
         $this->configureRateLimiting();
@@ -73,14 +87,6 @@ class AppServiceProvider extends ServiceProvider
 
     private function configureRateLimiting(): void
     {
-        RateLimiter::for('reel-enrollment', function (Request $request): Limit {
-            $application = $request->route('application');
-            $applicationId = $application instanceof Application
-                ? $application->public_id
-                : (string) $application;
-
-            // Ten attempts allow installer retries while bounding bcrypt and row-lock work per app and IP.
-            return Limit::perMinute(10)->by($request->ip().'|'.$applicationId);
-        });
+        RateLimiter::for('reel-ingest', fn (Request $request): Limit => Limit::perMinute(120)->by($request->ip()));
     }
 }

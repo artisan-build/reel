@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Enums\RecordingDeletionOutcome;
 use App\Enums\RecordingSessionStatus;
 use App\Models\RecordingSession;
-use App\Models\User;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -18,7 +18,7 @@ class RecordingDeletion
         private readonly ObjectMutationLock $locks,
     ) {}
 
-    public function delete(int $recordingSessionId, string $reason, ?User $actor = null): bool
+    public function delete(int $recordingSessionId, string $reason, ?IdentityContext $actor = null): bool
     {
         return $this->run($recordingSessionId, $reason, $actor, false)->completed();
     }
@@ -31,7 +31,7 @@ class RecordingDeletion
     private function run(
         int $recordingSessionId,
         string $reason,
-        ?User $actor,
+        ?IdentityContext $actor,
         bool $respectRetention,
     ): RecordingDeletionOutcome {
         $prepared = DB::transaction(function () use (
@@ -66,7 +66,7 @@ class RecordingDeletion
                     'status' => RecordingSessionStatus::Deleting,
                     'status_changed_at' => now(),
                     'deletion_started_at' => now(),
-                    'deletion_actor_id' => $actor?->getKey(),
+                    'deletion_actor_id' => $actor?->actorId(),
                     'deletion_reason' => $reason,
                 ])->save();
                 $locked->transitions()->create([

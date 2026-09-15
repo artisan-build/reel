@@ -10,7 +10,6 @@ use App\Console\Commands\RetainRecordingSessions;
 use App\Console\Commands\RetryRecordingDeletions;
 use App\Console\Commands\SmokeCloudDeployment;
 use App\Console\Commands\SweepRecordingOrphans;
-use App\Http\Middleware\EnsureUserIsAdministrator;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -34,11 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
         SmokeCloudDeployment::class,
         SweepRecordingOrphans::class,
     ])
-    ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->alias([
-            'admin' => EnsureUserIsAdministrator::class,
-        ]);
-    })
+    ->withMiddleware(function (Middleware $middleware): void {})
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->create();

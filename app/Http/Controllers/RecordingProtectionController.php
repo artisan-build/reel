@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\RetentionRejected;
 use App\Models\Application;
-use App\Models\User;
 use App\Services\RecordingProtection;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
@@ -18,8 +18,8 @@ class RecordingProtectionController extends Controller
         RecordingProtection $protection,
     ): RedirectResponse {
         $session = $application->recordingSessions()->where('session_id', $recordingSession)->firstOrFail();
-        $actor = $request->user();
-        abort_unless($actor instanceof User, 403);
+        $actor = resolve(IdentityContext::class);
+        abort_unless($actor->canUseProduct(), 403);
 
         try {
             $changed = $protection->protect($session->getKey(), $actor);
@@ -37,8 +37,8 @@ class RecordingProtectionController extends Controller
         RecordingProtection $protection,
     ): RedirectResponse {
         $session = $application->recordingSessions()->where('session_id', $recordingSession)->firstOrFail();
-        $actor = $request->user();
-        abort_unless($actor instanceof User, 403);
+        $actor = resolve(IdentityContext::class);
+        abort_unless($actor->canUseProduct(), 403);
 
         try {
             $changed = $protection->unprotect($session->getKey(), $actor);

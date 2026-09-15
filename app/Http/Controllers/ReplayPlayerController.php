@@ -9,6 +9,7 @@ use App\Models\RecordingSession;
 use App\Models\ReplayView;
 use App\Services\ReplayPayload;
 use App\Services\ReplayPayloadReader;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +32,8 @@ class ReplayPlayerController extends Controller
         abort_unless(is_string($channel) && preg_match('/^[a-f0-9]{96}$/', $channel) === 1, 404);
 
         $session->setRelation('application', $application);
+        $identity = resolve(IdentityContext::class);
+        abort_unless($identity->canUseProduct(), 403);
         $validSignature = $request->hasValidSignature();
         $payload = $validSignature
             ? $reader->read($session)
@@ -39,7 +42,7 @@ class ReplayPlayerController extends Controller
 
         if ($payload->diagnostic === null) {
             event(new ReplayPayloadRead($session->getKey()));
-            $deliverable = DB::transaction(function () use ($application, $request, $session): bool {
+            $deliverable = DB::transaction(function () use ($application, $identity, $session): bool {
                 $locked = RecordingSession::query()
                     ->where('application_id', $application->getKey())
                     ->lockForUpdate()
@@ -50,7 +53,7 @@ class ReplayPlayerController extends Controller
                 }
 
                 ReplayView::query()->create([
-                    'user_id' => $request->user()->getAuthIdentifier(),
+                    'actor_id' => $identity->actorId(),
                     'application_id' => $application->getKey(),
                     'recording_session_id' => $locked->getKey(),
                     'viewed_at' => now(),

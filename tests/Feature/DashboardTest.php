@@ -1,10 +1,10 @@
 <?php
 
-use App\Models\User;
+use Tests\Support\User;
 
 test('guests are redirected to the login page', function (): void {
     $response = $this->get(route('dashboard'));
-    $response->assertRedirect(route('login'));
+    $response->assertRedirect(route('bfc.login'));
 });
 
 test('authenticated users can visit the dashboard', function (): void {

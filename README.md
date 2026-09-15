@@ -20,7 +20,7 @@ The full product definition, scope, and build sequence live in
 ## Deploy and connect
 
 The machine-readable [`built-for-cloud.json`](built-for-cloud.json) declares Reel's Laravel Cloud
-resources, build, post-deploy, and scheduler contract. The complete deployment, first-admin, recovery,
+resources, build, post-deploy, and scheduler contract. The complete deployment, authority, recovery,
 upgrade, and uninstall procedures are in [`docs/deployment.md`](docs/deployment.md).
 
 To connect a monitored Laravel application after creating it in Reel:
@@ -37,7 +37,7 @@ privacy decision.
 ## Stack
 
 - PHP 8.3+ / [Laravel](https://laravel.com) 13
-- Livewire 4 + Flux, [Laravel Fortify](https://laravel.com/docs/fortify) for authentication
+- Livewire 4 + Flux, with package-owned Built for Cloud authentication and authority
 - PostgreSQL
 - **Nodeless:** no Node, npm, Vite, or frontend build step. Do not introduce one.
 

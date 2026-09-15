@@ -45,14 +45,6 @@ class Application extends Model
     }
 
     /**
-     * @return HasMany<ApplicationCredential, $this>
-     */
-    public function credentials(): HasMany
-    {
-        return $this->hasMany(ApplicationCredential::class);
-    }
-
-    /**
      * @return HasMany<RecordingSession, $this>
      */
     public function recordingSessions(): HasMany

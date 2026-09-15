@@ -26,15 +26,16 @@
         </div>
     @endif
 
-    <section class="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-700 dark:bg-zinc-900" data-test="retention-controls">
+    @php($identity = app(\ArtisanBuild\BuiltForCloud\Contracts\IdentityContext::class))
+    <section class="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-700 dark:bg-zinc-900" data-testid="retention-controls">
         <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
                 <flux:heading>{{ __('Retention') }}</flux:heading>
                 @if ($recording->protected_at !== null)
-                    <p class="mt-2 text-sm">{{ __('Protected by :actor at :time.', ['actor' => $recording->protectionOwner?->name ?? __('a deleted or anonymized user'), 'time' => $recording->protected_at->toDayDateTimeString()]) }}</p>
+                    <p class="mt-2 text-sm">{{ __('Protected by actor :actor at :time.', ['actor' => $recording->protected_by, 'time' => $recording->protected_at->toDayDateTimeString()]) }}</p>
                 @elseif ($recording->unprotected_at !== null)
                     @php($lastUnprotect = $recording->protectionEvents->where('action', 'unprotected')->last())
-                    <p class="mt-2 text-sm">{{ __('Unprotected by :actor. Scheduled deletion is no earlier than :time.', ['actor' => $lastUnprotect?->actor_name ?? __('a deleted or anonymized user'), 'time' => $recording->delete_not_before?->toDayDateTimeString() ?? __('unknown')]) }}</p>
+                    <p class="mt-2 text-sm">{{ __('Unprotected by actor :actor. Scheduled deletion is no earlier than :time.', ['actor' => $lastUnprotect?->actor_id ?? __('unknown'), 'time' => $recording->delete_not_before?->toDayDateTimeString() ?? __('unknown')]) }}</p>
                 @else
                     <p class="mt-2 text-sm">{{ __('Scheduled deletion is no earlier than :time.', ['time' => $recording->delete_not_before?->toDayDateTimeString() ?? __('unknown')]) }}</p>
                 @endif
@@ -45,14 +46,14 @@
                         @csrf
                         <flux:button type="submit">{{ __('Protect recording') }}</flux:button>
                     </form>
-                @elseif ($recording->status === \App\Enums\RecordingSessionStatus::Ready && $recording->protected_at !== null && (auth()->user()->is_admin || $recording->protected_by === auth()->id()))
+                @elseif ($recording->status === \App\Enums\RecordingSessionStatus::Ready && $recording->protected_at !== null && $identity->isSameActorOrAdminOrOwner($recording->protected_by))
                     <form method="POST" action="{{ route('sessions.protection.destroy', ['application' => $recording->application, 'recordingSession' => $recording]) }}">
                         @csrf
                         @method('DELETE')
                         <flux:button type="submit" variant="outline">{{ __('Unprotect with 72-hour cooling') }}</flux:button>
                     </form>
                 @endif
-                @if (auth()->user()->is_admin && $recording->status !== \App\Enums\RecordingSessionStatus::Deleted)
+                @if ($recording->status !== \App\Enums\RecordingSessionStatus::Deleted)
                     <form method="POST" action="{{ route('admin.sessions.destroy', ['application' => $recording->application, 'recordingSession' => $recording]) }}">
                         @csrf
                         @method('DELETE')
@@ -64,7 +65,7 @@
     </section>
 
     @if ($uncertaintyReasons !== [])
-        <section class="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100" data-test="completeness-uncertain">
+        <section class="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100" data-testid="completeness-uncertain">
             <flux:heading>{{ __('Completeness not confirmed') }}</flux:heading>
             <p class="mt-2 text-sm">{{ __('The recorder did not send an explicit closing sequence, so the number of gaps is not determinable. The replay may still contain all captured activity.') }}</p>
         </section>

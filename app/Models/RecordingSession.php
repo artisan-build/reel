@@ -62,12 +62,6 @@ class RecordingSession extends Model
         return $this->belongsTo(Application::class);
     }
 
-    /** @return BelongsTo<ApplicationCredential, $this> */
-    public function credential(): BelongsTo
-    {
-        return $this->belongsTo(ApplicationCredential::class, 'application_credential_id');
-    }
-
     /** @return HasMany<RecordingChunk, $this> */
     public function chunks(): HasMany
     {
@@ -102,12 +96,6 @@ class RecordingSession extends Model
     public function protectionEvents(): HasMany
     {
         return $this->hasMany(RecordingProtectionEvent::class);
-    }
-
-    /** @return BelongsTo<User, $this> */
-    public function protectionOwner(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'protected_by');
     }
 
     #[\Override]

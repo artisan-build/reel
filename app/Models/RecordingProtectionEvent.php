@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * @mixin IdeHelperRecordingProtectionEvent
  */
-#[Fillable(['actor_user_id', 'actor_name', 'action', 'occurred_at'])]
+#[Fillable(['actor_id', 'action', 'occurred_at'])]
 class RecordingProtectionEvent extends Model
 {
     public $timestamps = false;

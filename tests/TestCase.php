@@ -2,15 +2,29 @@
 
 namespace Tests;
 
+use ArtisanBuild\BuiltForCloud\StandaloneAccess;
+use ArtisanBuild\BuiltForCloud\User;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
-use Laravel\Fortify\Features;
+use Illuminate\Support\Facades\DB;
 
 abstract class TestCase extends BaseTestCase
 {
-    protected function skipUnlessFortifyHas(string $feature, ?string $message = null): void
+    #[\Override]
+    public function actingAs(Authenticatable $user, $guard = null)
     {
-        if (! Features::enabled($feature)) {
-            $this->markTestSkipped($message ?? "Fortify feature [{$feature}] is not enabled.");
-        }
+        DB::table('bfc_authority')->updateOrInsert(
+            ['key' => 'installation'],
+            ['mode' => 'standalone', 'generation' => 1, 'updated_at' => now(), 'created_at' => now()],
+        );
+        $canonicalUser = $user instanceof User
+            ? User::query()->findOrFail($user->getAuthIdentifier())
+            : $user;
+
+        parent::actingAs($canonicalUser, $guard);
+
+        return $this->withSession([
+            StandaloneAccess::SESSION_VERSION_KEY => (int) data_get($canonicalUser, 'auth_session_version', 1),
+        ]);
     }
 }

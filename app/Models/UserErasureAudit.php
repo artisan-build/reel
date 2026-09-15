@@ -11,8 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 #[Fillable([
     'batch_id',
-    'actor_user_id',
-    'actor_name',
+    'actor_id',
     'application_id',
     'requested_at',
     'completed_at',

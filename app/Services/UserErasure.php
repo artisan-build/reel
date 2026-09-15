@@ -7,8 +7,8 @@ use App\Exceptions\RetentionRejected;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
 use App\Models\RecordingSession;
-use App\Models\User;
 use App\Models\UserErasureAudit;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -17,10 +17,10 @@ class UserErasure
 {
     public function __construct(private readonly RecordingDeletion $deletion) {}
 
-    public function erase(Application $application, string $applicationUserId, User $actor, bool $confirmed): UserErasureAudit
+    public function erase(Application $application, string $applicationUserId, IdentityContext $actor, bool $confirmed): UserErasureAudit
     {
-        if (! $actor->is_admin) {
-            throw new RetentionRejected('administrator_required', 403);
+        if (! $actor->canUseProduct()) {
+            throw new RetentionRejected('membership_required', 403);
         }
 
         if (! $confirmed) {
@@ -41,8 +41,7 @@ class UserErasure
             $batchId = (string) Str::uuid();
             $audit = UserErasureAudit::query()->create([
                 'batch_id' => $batchId,
-                'actor_user_id' => $actor->getKey(),
-                'actor_name' => $actor->name,
+                'actor_id' => $actor->actorId(),
                 'application_id' => $application->getKey(),
                 'requested_at' => now(),
                 'matched_count' => $sessions->count(),

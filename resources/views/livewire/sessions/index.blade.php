@@ -47,8 +47,8 @@
         </div>
     </section>
 
-    @if (auth()->user()->is_admin && $applicationId !== '' && $applicationUserId !== '')
-        <section class="rounded-xl border border-red-300 bg-red-50 p-5 dark:border-red-800 dark:bg-red-950/30" data-test="application-user-erasure">
+    @if ($applicationId !== '' && $applicationUserId !== '')
+        <section class="rounded-xl border border-red-300 bg-red-50 p-5 dark:border-red-800 dark:bg-red-950/30" data-testid="application-user-erasure">
             <flux:heading>{{ __('Delete this application user history') }}</flux:heading>
             <p class="mt-2 text-sm">{{ __('This overrides protection and cooling. Enter the exact application user ID to confirm deletion from the live Reel deployment.') }}</p>
             <form method="POST" action="{{ route('admin.application-users.destroy', ['application' => $applicationId]) }}" class="mt-4 flex flex-wrap items-end gap-3">
@@ -60,7 +60,7 @@
         </section>
     @endif
 
-    <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900" data-test="session-list">
+    <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900" data-testid="session-list">
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
                 <thead class="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">

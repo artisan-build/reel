@@ -2,8 +2,9 @@
 
 namespace App\Livewire\Applications;
 
-use App\Livewire\Applications\Concerns\EnsuresAdministrator;
 use App\Models\Application;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -12,11 +13,14 @@ use Livewire\Component;
 #[Title('Applications')]
 class Index extends Component
 {
-    use EnsuresAdministrator;
-
     public function mount(): void
     {
-        $this->ensureAdministrator();
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
+    }
+
+    public function render(): View
+    {
+        return view('livewire.applications.index');
     }
 
     /**
@@ -25,7 +29,7 @@ class Index extends Component
     #[Computed]
     public function applications(): Collection
     {
-        $this->ensureAdministrator();
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
 
         return Application::query()->latest()->get();
     }
