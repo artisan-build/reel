@@ -120,7 +120,7 @@ function postReelLivewireUpdate(array $snapshot, string $method, array $params =
 {
     Auth::forgetGuards();
 
-    return test()->postJson(app(LivewireManager::class)->getUpdateUri(), [
+    return test()->postJson(resolve(LivewireManager::class)->getUpdateUri(), [
         'components' => [[
             'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
             'updates' => [],
@@ -505,7 +505,7 @@ it('ends a removed managed session before Reel state can mutate', function (): v
 });
 
 it('applies the package human gate to real Livewire updates after standalone session revocation', function (): void {
-    $persistentMiddleware = app(LivewireManager::class)->getPersistentMiddleware();
+    $persistentMiddleware = resolve(LivewireManager::class)->getPersistentMiddleware();
     expect($persistentMiddleware)->toContain(EnsureUserIsAuthenticated::class)
         ->and(array_search(EnsureConsoleSession::class, $persistentMiddleware, true))
         ->toBeLessThan(array_search(EnsureUserIsAuthenticated::class, $persistentMiddleware, true));
