@@ -17,6 +17,7 @@ use ArtisanBuild\BuiltForCloud\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Routing\Route as LaravelRoute;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -102,6 +103,7 @@ function reelManagedConfirmationCalls(ManagedAuthorityFixture $fixture): int
 }
 
 beforeEach(function (): void {
+    Cache::flush();
     CarbonImmutable::setTestNow('2026-09-15T12:00:00+00:00');
 });
 
