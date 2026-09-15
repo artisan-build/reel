@@ -14,6 +14,8 @@ require __DIR__.'/../../vendor/autoload.php';
 const R1_POSTGRES_IMAGE = 'postgres:17-alpine';
 const R1_REDIS_IMAGE = 'redis:7-alpine';
 const R1_MINIO_IMAGE = 'quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z';
+const R1_DIAGNOSTIC_MAX_BYTES = 4096;
+const R1_DIAGNOSTIC_MAX_LINES = 40;
 const R1_FOCUSED_TESTS = [
     'tests/Feature/ApplicationEnrollmentTest.php',
     'tests/Feature/ApplicationManagementTest.php',
@@ -28,6 +30,56 @@ function r1Fail(string $message): void
     throw new RuntimeException($message);
 }
 
+/** @param array<string, string> $environment */
+function r1Diagnostic(string $output, array $environment): string
+{
+    $output = preg_replace('/\x1B\[[0-?]*[ -\/]*[@-~]/', '', $output) ?? '';
+    $output = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', str_replace(["\r\n", "\r"], "\n", $output)) ?? '';
+
+    foreach ($environment as $name => $value) {
+        if ($value !== '' && preg_match('/(?:DATABASE|PORT|PASSWORD|SECRET|TOKEN|KEY(?:_ID)?|ROOT_USER)$/i', $name) === 1) {
+            $output = str_replace($value, '[redacted]', $output);
+        }
+    }
+
+    $output = preg_replace([
+        '/-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----/s',
+        '/(?i)((?:--)?(?:password|secret|token|api[_-]?key|access[_-]?key(?:[_-]?id)?|private[_-]?key|root[_-]?user)\s*[=:]\s*)\S+/',
+        '/\bbase64:[A-Za-z0-9+\/=]{32,}\b/',
+        '/\bbfc_p6_[a-f0-9]{32}\b/',
+        '/\breel-r1-(?:pg|redis|minio)-[a-f0-9]+\b/',
+        '/\b127\.0\.0\.1:[0-9]{2,5}\b/',
+    ], [
+        '[redacted private key]',
+        '$1[redacted]',
+        '[redacted key]',
+        '[redacted database]',
+        '[redacted container]',
+        '127.0.0.1:[redacted port]',
+    ], $output) ?? '';
+
+    $output = trim($output);
+    if ($output === '') {
+        return '[no output]';
+    }
+
+    $truncated = false;
+    $lines = explode("\n", $output);
+    if (count($lines) > R1_DIAGNOSTIC_MAX_LINES) {
+        $lines = array_slice($lines, -R1_DIAGNOSTIC_MAX_LINES);
+        $truncated = true;
+    }
+    $output = implode("\n", $lines);
+
+    $marker = '[diagnostic truncated]... ';
+    if (strlen($output) > R1_DIAGNOSTIC_MAX_BYTES - strlen($marker)) {
+        $output = substr($output, -(R1_DIAGNOSTIC_MAX_BYTES - strlen($marker)));
+        $truncated = true;
+    }
+
+    return $truncated ? $marker.ltrim($output) : $output;
+}
+
 /**
  * @param  list<string>  $command
  * @param  array<string, string>  $environment
@@ -37,7 +89,18 @@ function r1Run(array $command, string $directory, array $environment, string $la
     $process = new Process($command, $directory, $environment, null, $timeout);
 
     if ($process->run() !== 0) {
-        r1Fail($label.' exited non-zero: '.trim($process->getErrorOutput()));
+        $diagnosticEnvironment = $environment;
+        foreach ($command as $argument) {
+            if (preg_match('/^(?:--)?([A-Z0-9_-]*(?:DATABASE|PORT|PASSWORD|SECRET|TOKEN|KEY(?:_ID)?|ROOT_USER))=(.+)$/i', $argument, $sensitive) === 1) {
+                $diagnosticEnvironment['COMMAND_'.$sensitive[1]] = $sensitive[2];
+            }
+        }
+        r1Fail(sprintf(
+            "%s exited non-zero.\nstdout:\n%s\nstderr:\n%s",
+            $label,
+            r1Diagnostic($process->getOutput(), $diagnosticEnvironment),
+            r1Diagnostic($process->getErrorOutput(), $diagnosticEnvironment),
+        ));
     }
 
     return $process->getOutput();
@@ -191,6 +254,41 @@ if (in_array('--self-check', $argv, true)) {
     foreach ($requiredFocusedTests as $requiredFocusedTest) {
         if (! is_file($root.'/'.$requiredFocusedTest)) {
             r1Fail('The live runner self-check cannot find '.$requiredFocusedTest.'.');
+        }
+    }
+    $diagnosticEnvironment = [
+        'DB_DATABASE' => 'self_check_database_should_not_escape',
+        'DB_PORT' => '65432',
+        'AWS_SECRET_ACCESS_KEY' => 'self_check_secret_should_not_escape',
+    ];
+    try {
+        r1Run([
+            PHP_BINARY,
+            '-r',
+            'fwrite(STDOUT, str_repeat("o\\n", 80)."self-check-stdout\\ndatabase=self_check_database_should_not_escape\\n");'.
+                'fwrite(STDERR, str_repeat("e", 8192)."\\nself-check-stderr\\npassword=self_check_secret_should_not_escape\\n".implode(" ", array_slice($argv, 1)));'.
+                'exit(23);',
+            '--',
+            '--password=self_check_command_password_should_not_escape',
+            'MINIO_ROOT_USER=self_check_root_user_should_not_escape',
+        ], $root, $diagnosticEnvironment, 'diagnostic self-check');
+        r1Fail('The diagnostic self-check process unexpectedly succeeded.');
+    } catch (RuntimeException $exception) {
+        $diagnostic = $exception->getMessage();
+        if (preg_match('/stdout:\n(.*?)\nstderr:\n(.*)$/s', $diagnostic, $channels) !== 1
+            || ! str_contains($channels[1], 'self-check-stdout')
+            || ! str_contains($channels[2], 'self-check-stderr')
+            || str_contains($diagnostic, 'self_check_database_should_not_escape')
+            || str_contains($diagnostic, 'self_check_secret_should_not_escape')
+            || str_contains($diagnostic, 'self_check_command_password_should_not_escape')
+            || str_contains($diagnostic, 'self_check_root_user_should_not_escape')
+            || ! str_contains($channels[1], '[diagnostic truncated]')
+            || ! str_contains($channels[2], '[diagnostic truncated]')
+            || strlen($channels[1]) > R1_DIAGNOSTIC_MAX_BYTES
+            || strlen($channels[2]) > R1_DIAGNOSTIC_MAX_BYTES
+            || substr_count($channels[1], "\n") >= R1_DIAGNOSTIC_MAX_LINES
+            || substr_count($channels[2], "\n") >= R1_DIAGNOSTIC_MAX_LINES) {
+            r1Fail('The live runner self-check could not prove bounded redacted diagnostics for both output channels.');
         }
     }
     foreach (['create-admin', '--local', 'reel:smoke', 'schedule:run', '127.0.0.1', 'finally'] as $required) {
