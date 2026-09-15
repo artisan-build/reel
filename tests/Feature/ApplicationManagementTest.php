@@ -12,8 +12,11 @@ use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
 use ArtisanBuild\BuiltForCloud\OnboardingToken;
 use ArtisanBuild\BuiltForCloud\SubjectType;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Database\QueryException;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -26,17 +29,84 @@ use Tests\Support\User;
 /** @param list<MessageLogged> $logs */
 function expectEnrollmentCodeNotPersisted(string $code, array $logs): void
 {
-    $cacheStore = Cache::store()->getStore();
-    $cacheState = (new ReflectionProperty($cacheStore, 'storage'))->getValue($cacheStore);
-
     expect(serialize(session()->all()))->not->toContain($code)
-        ->and(serialize($cacheState))->not->toContain($code)
+        ->and(serialize(enrollmentCacheBackingState()))->not->toContain($code)
         ->and(serialize($logs))->not->toContain($code);
 
     foreach (['applications', 'credentials', 'onboarding_tokens', 'credential_protocol_bindings', 'credential_audit_events', 'cache', 'jobs', 'failed_jobs'] as $table) {
         expect(serialize(DB::table($table)->get()->all()))->not->toContain($code);
     }
 }
+
+/** @return array<mixed> */
+function enrollmentCacheBackingState(): array
+{
+    $store = Cache::store()->getStore();
+
+    if ($store instanceof ArrayStore) {
+        return (new ReflectionProperty($store, 'storage'))->getValue($store);
+    }
+
+    if (! $store instanceof RedisStore) {
+        throw new RuntimeException('Enrollment persistence assertion does not support the configured cache store.');
+    }
+
+    $connection = $store->connection();
+
+    if (! $connection instanceof PhpRedisConnection) {
+        throw new RuntimeException('Enrollment persistence assertion does not support the configured Redis connection.');
+    }
+
+    $connectionPrefix = (string) $connection->_prefix('');
+    $cachePrefix = $connectionPrefix.$store->getPrefix();
+    $cursor = version_compare((string) phpversion('redis'), '6.1.0', '>=') ? null : '0';
+    $initialCursor = $cursor;
+    $keys = [];
+    $iterations = 0;
+
+    do {
+        if (++$iterations > 1_000) {
+            throw new RuntimeException('Enrollment persistence assertion exceeded its bounded Redis scan.');
+        }
+
+        $result = $connection->scan($cursor, ['match' => $cachePrefix.'*', 'count' => 1_000]);
+
+        if ($result === false) {
+            break;
+        }
+
+        if (! is_array($result) || count($result) !== 2 || ! is_array($result[1])) {
+            throw new RuntimeException('Enrollment persistence assertion received an invalid Redis scan response.');
+        }
+
+        [$cursor, $batch] = $result;
+        $keys = array_values(array_unique([...$keys, ...$batch]));
+
+        if (count($keys) > 10_000) {
+            throw new RuntimeException('Enrollment persistence assertion exceeded its bounded Redis key set.');
+        }
+    } while ((string) $cursor !== (string) $initialCursor);
+
+    return array_map(static function (string $key) use ($connection, $connectionPrefix): ?string {
+        if (! str_starts_with($key, $connectionPrefix)) {
+            throw new RuntimeException('Enrollment persistence assertion received a Redis key outside its connection prefix.');
+        }
+
+        $value = $connection->get(substr($key, strlen($connectionPrefix)));
+
+        if (! is_string($value) && $value !== null) {
+            throw new RuntimeException('Enrollment persistence assertion could not read a Redis cache value.');
+        }
+
+        return $value;
+    }, $keys);
+}
+
+it('inspects the configured cache backing state without assuming its driver', function (): void {
+    Cache::put('enrollment-persistence-probe', 'test-created-cache-backing-value', 60);
+
+    expect(serialize(enrollmentCacheBackingState()))->toContain('test-created-cache-backing-value');
+});
 
 it('stores the complete application policy behind an opaque public route key', function (): void {
     $application = Application::factory()->create([
