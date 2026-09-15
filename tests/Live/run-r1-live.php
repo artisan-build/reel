@@ -177,6 +177,7 @@ function r1RedisEnvironment(int $port, string $prefix): array
         'REDIS_PASSWORD' => 'null',
         'REDIS_PORT' => (string) $port,
         'REDIS_DB' => '0',
+        'REDIS_CACHE_CONNECTION' => 'cache',
         'REDIS_CACHE_DB' => '1',
         'REDIS_CLUSTER' => 'redis',
         'REDIS_PREFIX' => $prefix.'redis-',
@@ -476,6 +477,7 @@ if (in_array('--self-check', $argv, true)) {
         'REDIS_PASSWORD' => 'null',
         'REDIS_PORT' => '16379',
         'REDIS_DB' => '0',
+        'REDIS_CACHE_CONNECTION' => 'cache',
         'REDIS_CACHE_DB' => '1',
         'REDIS_CLUSTER' => 'redis',
         'REDIS_PREFIX' => 'reel-r1-self-check-redis-',
@@ -486,6 +488,25 @@ if (in_array('--self-check', $argv, true)) {
         'REDIS_BACKOFF_CAP' => '1000',
     ]) {
         r1Fail('The live runner self-check requires the complete explicit disposable Redis environment.');
+    }
+    $focusedTestsPosition = strpos(
+        $source,
+        '$cases[\'isolated_r1_focused_tests\'] = '.'r1FocusedTests($app, $environment);',
+    );
+    $cacheClearPosition = strpos(
+        $source,
+        "r1Run([PHP_BINARY, 'artisan', 'cache:clear', '--no-interaction'], ".'$app, $environment, \'focused test cache clear\');',
+    );
+    $browserFixturePosition = strpos(
+        $source,
+        '$browserState = '.'r1BrowserState($app, $environment, $browserPassword);',
+    );
+    if ($focusedTestsPosition === false
+        || $cacheClearPosition === false
+        || $browserFixturePosition === false
+        || $focusedTestsPosition >= $cacheClearPosition
+        || $cacheClearPosition >= $browserFixturePosition) {
+        r1Fail('The live runner self-check requires a dedicated cache clear between focused tests and browser setup.');
     }
     $diagnosticEnvironment = [
         'DB_DATABASE' => 'self_check_database_should_not_escape',
@@ -759,6 +780,7 @@ try {
     ]);
 
     $cases['isolated_r1_focused_tests'] = r1FocusedTests($app, $environment);
+    r1Run([PHP_BINARY, 'artisan', 'cache:clear', '--no-interaction'], $app, $environment, 'focused test cache clear');
     r1Run([PHP_BINARY, 'artisan', 'migrate:fresh', '--force', '--no-interaction'], $app, $environment, 'fresh live migration');
 
     $package = r1LockedPackage($app.'/composer.lock', 'artisan-build/built-for-cloud');
