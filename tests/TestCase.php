@@ -3,6 +3,7 @@
 namespace Tests;
 
 use ArtisanBuild\BuiltForCloud\StandaloneAccess;
+use ArtisanBuild\BuiltForCloud\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\DB;
@@ -15,10 +16,14 @@ abstract class TestCase extends BaseTestCase
             ['key' => 'installation'],
             ['mode' => 'standalone', 'generation' => 1, 'updated_at' => now(), 'created_at' => now()],
         );
-        parent::actingAs($user, $guard);
+        $canonicalUser = $user instanceof User
+            ? User::query()->findOrFail($user->getAuthIdentifier())
+            : $user;
+
+        parent::actingAs($canonicalUser, $guard);
 
         return $this->withSession([
-            StandaloneAccess::SESSION_VERSION_KEY => (int) data_get($user, 'auth_session_version', 1),
+            StandaloneAccess::SESSION_VERSION_KEY => (int) data_get($canonicalUser, 'auth_session_version', 1),
         ]);
     }
 }

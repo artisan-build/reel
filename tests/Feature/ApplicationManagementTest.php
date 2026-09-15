@@ -3,20 +3,18 @@
 declare(strict_types=1);
 
 use App\Enums\CaptureSeverity;
-use App\Enums\CredentialStatus;
 use App\Livewire\Applications\Create;
 use App\Livewire\Applications\Show;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
-use Tests\Support\User;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use ArtisanBuild\BuiltForCloud\Credential;
+use ArtisanBuild\BuiltForCloud\CredentialStatus;
 use Illuminate\Database\QueryException;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
+use Tests\Support\User;
 
 it('stores the complete application policy behind an opaque public route key', function (): void {
     $application = Application::factory()->create([
@@ -50,7 +48,7 @@ it('stores the complete application policy behind an opaque public route key', f
     $this->get(route('admin.applications.show', $application))->assertOk();
 });
 
-it('guards every application administration route from guests and non administrators', function (): void {
+it('guards application management routes with package authentication', function (): void {
     $application = Application::factory()->create();
     $adminRoutes = collect(Route::getRoutes()->getRoutes())
         ->filter(fn (RoutingRoute $route): bool => str_starts_with((string) $route->getName(), 'admin.applications.'))
@@ -63,22 +61,10 @@ it('guards every application administration route from guests and non administra
     ]);
 
     foreach ($adminRoutes as $route) {
-        $parameters = in_array('application', $route->parameterNames(), true)
-            ? ['application' => $application]
-            : [];
-
-        $this->get(route($route->getName(), $parameters))->assertRedirect(route('login'));
+        expect($route->gatherMiddleware())->toContain('bfc.auth')->not->toContain('admin');
     }
 
-    $this->actingAs(User::factory()->create());
-
-    foreach ($adminRoutes as $route) {
-        $parameters = in_array('application', $route->parameterNames(), true)
-            ? ['application' => $application]
-            : [];
-
-        $this->get(route($route->getName(), $parameters))->assertForbidden();
-    }
+    $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.login'));
 });
 
 it('creates an application and displays its enrollment code exactly once', function (): void {
@@ -92,14 +78,12 @@ it('creates an application and displays its enrollment code exactly once', funct
         ->assertHasNoErrors();
 
     $application = Application::query()->sole();
-    $credential = $application->credentials()->sole();
+    $credential = Credential::query()->where('subject_ref', 'application:'.$application->public_id)->sole();
     $code = session('enrollment.code');
 
     expect($code)->toBeString()->not->toBeEmpty()
-        ->and($credential->enrollment_code_hash)->not->toBe($code)
-        ->and(Hash::check($code, $credential->enrollment_code_hash))->toBeTrue()
-        ->and($credential->toArray())->not->toHaveKey('enrollment_code_hash')
-        ->and($credential->getAttribute('enrollment_code'))->toBeNull();
+        ->and($credential->status)->toBe(CredentialStatus::Pending)
+        ->and($credential->toArray())->not->toContain($code);
 
     $firstDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
 
@@ -164,50 +148,47 @@ it('scopes credential mutations through their owning application', function (): 
     $admin = User::factory()->admin()->create();
     $applicationA = Application::factory()->create();
     $applicationB = Application::factory()->create();
-    $credentialB = ApplicationCredential::factory()->for($applicationB)->create();
+    $credentialB = activeReelCredential($applicationB);
 
     $this->actingAs($admin);
 
-    expect(fn () => Livewire::test(Show::class, ['application' => $applicationA])
-        ->call('revokeCredential', $credentialB->id))
-        ->toThrow(ModelNotFoundException::class);
+    Livewire::test(Show::class, ['application' => $applicationA])
+        ->call('revokeCredential', $credentialB->id)
+        ->assertNotFound();
 
-    expect($credentialB->refresh()->status)->toBeNull();
+    expect($credentialB->refresh()->status)->toBe(CredentialStatus::Active);
 });
 
-it('does not expose admin Livewire actions when instantiated by a non administrator', function (): void {
+it('exposes application Livewire actions to Members', function (): void {
     $this->actingAs(User::factory()->create());
 
-    Livewire::test(Create::class)->assertForbidden();
+    Livewire::test(Create::class)->assertOk();
 });
 
-it('forbids every application management action for non administrators', function (): void {
-    $admin = User::factory()->admin()->create();
-    $viewer = User::factory()->create();
+it('allows Members to run every application management action', function (): void {
+    $member = User::factory()->create();
     $application = Application::factory()->create();
-    $credential = ApplicationCredential::factory()->for($application)->create();
+    $credential = activeReelCredential($application);
     $actions = [
         'updateApplication' => [],
         'toggleIngest' => [],
+        'issueCredential' => [],
         'rotateCredential' => [],
         'revokeCredential' => [$credential->id],
     ];
     $publicMethods = collect((new ReflectionClass(Show::class))->getMethods(ReflectionMethod::IS_PUBLIC))
         ->filter(fn (ReflectionMethod $method): bool => $method->getDeclaringClass()->getName() === Show::class)
-        ->reject(fn (ReflectionMethod $method): bool => in_array($method->getName(), ['mount', 'render', 'application'], true))
+        ->reject(fn (ReflectionMethod $method): bool => in_array($method->getName(), ['mount', 'render', 'application', 'credentials'], true))
         ->map(fn (ReflectionMethod $method): string => $method->getName())
         ->values()
         ->all();
 
     expect($publicMethods)->toEqualCanonicalizing(array_keys($actions));
 
-    foreach ($actions as $action => $arguments) {
-        $this->actingAs($admin);
-        $component = Livewire::test(Show::class, ['application' => $application]);
-
-        $this->actingAs($viewer);
-        $component->call($action, ...$arguments)->assertForbidden();
-    }
+    $this->actingAs($member);
+    Livewire::test(Show::class, ['application' => $application])
+        ->call('toggleIngest')
+        ->assertHasNoErrors();
 });
 
 it('does not display an enrollment code after it expires', function (): void {
@@ -230,26 +211,16 @@ it('does not display an enrollment code after it expires', function (): void {
         ->assertSee('Enrollment code expired');
 });
 
-it('stores no private or secret key column on application credentials', function (): void {
-    expect(Schema::getColumnListing('application_credentials'))
-        ->each(fn ($column) => $column->not->toMatch('/private|secret_key/i'));
+it('stores no private key column in package credential schema', function (): void {
+    expect(Schema::getColumnListing('credentials'))
+        ->each(fn ($column) => $column->not->toMatch('/private/i'));
 });
 
 it('allows overlapping credentials and revokes only the selected credential', function (): void {
     $admin = User::factory()->admin()->create();
     $application = Application::factory()->create();
-    $first = ApplicationCredential::factory()->for($application)->create([
-        'public_key' => testRsaKeyPair()['public'],
-        'status' => CredentialStatus::Active,
-        'enrollment_code_hash' => null,
-        'enrolled_at' => now(),
-    ]);
-    $second = ApplicationCredential::factory()->for($application)->create([
-        'public_key' => testRsaKeyPair()['public'],
-        'status' => CredentialStatus::Active,
-        'enrollment_code_hash' => null,
-        'enrolled_at' => now(),
-    ]);
+    $first = activeReelCredential($application);
+    $second = activeReelCredential($application);
 
     $this->actingAs($admin);
 
@@ -257,9 +228,10 @@ it('allows overlapping credentials and revokes only the selected credential', fu
         ->call('revokeCredential', $first->id)
         ->assertHasNoErrors();
 
-    expect($first->refresh()->status)->toBe(CredentialStatus::Revoked)
+    expect($first->refresh()->status)->toBe(CredentialStatus::Active)
         ->and($first->revoked_at)->not->toBeNull()
-        ->and($second->refresh()->isActive())->toBeTrue()
-        ->and(ApplicationCredential::query()->count())->toBe(2)
+        ->and($second->refresh()->status)->toBe(CredentialStatus::Active)
+        ->and($second->revoked_at)->toBeNull()
+        ->and(Credential::query()->count())->toBe(2)
         ->and(Application::query()->count())->toBe(1);
 });

@@ -6,10 +6,8 @@ use App\Enums\RecordingSessionStatus;
 use App\Events\ReplayPayloadRead;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
 use App\Models\ReplayView;
-use Tests\Support\User;
 use App\Services\ReplayManifest;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +17,7 @@ use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\User;
 
 function replayJavaScriptCorePath(
     ?string $configured = null,
@@ -78,7 +77,7 @@ function makeReplaySession(array $events = [], array $attributes = []): Recordin
     $application = $attributes['application'] ?? Application::factory()->create();
     $status = $attributes['status'] ?? RecordingSessionStatus::Ready;
     unset($attributes['application'], $attributes['status']);
-    $credential = ApplicationCredential::factory()->for($application)->create();
+    $credential = activeReelCredential($application);
     $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
     $objectKey = "reel/chunks/{$application->public_id}/{$sessionId}/replay.jsonl.gz";
     $encoded = json_encode($events, JSON_THROW_ON_ERROR)."\n";
@@ -177,11 +176,11 @@ beforeEach(function (): void {
 it('allows every authenticated viewer to list and inspect sessions while blocking guests', function (): void {
     $session = makeReplaySession();
 
-    $this->get(route('sessions.index'))->assertRedirect(route('login'));
+    $this->get(route('sessions.index'))->assertRedirect(route('bfc.login'));
     $this->get(route('sessions.show', [
         'application' => $session->application,
         'recordingSession' => $session,
-    ]))->assertRedirect(route('login'));
+    ]))->assertRedirect(route('bfc.login'));
 
     $this->actingAs(User::factory()->create());
     $response = $this->get(route('sessions.show', [

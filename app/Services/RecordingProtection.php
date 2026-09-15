@@ -53,7 +53,9 @@ class RecordingProtection
                 return false;
             }
 
-            if ($session->protected_by === null || ! $actor->isSameActorOrAdminOrOwner($session->protected_by)) {
+            $protector = $session->getAttribute('protected_by');
+
+            if (! is_string($protector) || ! $actor->isSameActorOrAdminOrOwner($protector)) {
                 throw new RetentionRejected('protection_owned_by_another_user', 403);
             }
 

@@ -2,20 +2,18 @@
 
 declare(strict_types=1);
 
-use App\Enums\CredentialStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Livewire\Sessions\Index;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
-use Tests\Support\User;
 use App\Models\UserErasureAudit;
 use App\Services\ChunkPrivacyValidator;
 use App\Services\UserErasure;
+use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrant;
@@ -30,10 +28,11 @@ use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Hmac\Sha256 as HmacSha256;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
+use Tests\Support\User;
 
 /**
  * @param  array<string, mixed>  $applicationOverrides
- * @return array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}
+ * @return array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}
  */
 function ingestContext(array $applicationOverrides = []): array
 {
@@ -43,12 +42,7 @@ function ingestContext(array $applicationOverrides = []): array
         ...$applicationOverrides,
     ]);
     $key = testRsaKeyPair();
-    $credential = ApplicationCredential::factory()->for($application)->create([
-        'public_key' => $key['public'],
-        'status' => CredentialStatus::Active,
-        'enrollment_code_hash' => null,
-        'enrolled_at' => now(),
-    ]);
+    $credential = activeReelCredential($application, $key);
 
     return [
         'application' => $application,
@@ -60,7 +54,7 @@ function ingestContext(array $applicationOverrides = []): array
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  array<string, mixed>  $overrides
  */
 function ingestGrant(array $context, array $overrides = []): string
@@ -90,7 +84,7 @@ function ingestGrant(array $context, array $overrides = []): string
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  array<string, mixed>  $overrides
  */
 function customIngestGrant(array $context, array $overrides = []): string
@@ -131,7 +125,7 @@ function customIngestGrant(array $context, array $overrides = []): string
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  */
 function symmetricIngestGrant(array $context): string
 {
@@ -188,7 +182,7 @@ function safeIngestEvents(?int $timestamp = null): array
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  * @param  list<array<string, mixed>>|null  $events
  * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
@@ -232,7 +226,7 @@ function postIngestEnvelope(array $envelope, string $origin = 'https://monitored
 }
 
 /**
- * @param  array{application: Application, credential: ApplicationCredential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
+ * @param  array{application: Application, credential: Credential, key: array{public: string, private: string}, session_id: string, origin: string}  $context
  */
 function insertConcurrentTestSession(array $context): int
 {
@@ -552,7 +546,7 @@ it('rejects inactive application and credential state', function (string $state,
     if ($state === 'application') {
         $context['application']->update(['ingest_enabled' => false]);
     } else {
-        $context['credential']->update(['status' => CredentialStatus::Revoked, 'revoked_at' => now()]);
+        $context['credential']->update(['revoked_at' => now()]);
     }
 
     postIngestEnvelope($envelope)->assertStatus($status)->assertJsonPath('reason', $reason);
@@ -1394,23 +1388,20 @@ it('rechecks and locks credential activity after decoding before persistence', f
 
     $this->app->instance(ChunkPrivacyValidator::class, new class($credential) extends ChunkPrivacyValidator
     {
-        public function __construct(private readonly ApplicationCredential $credential) {}
+        public function __construct(private readonly Credential $credential) {}
 
         #[Override]
         public function validate(mixed $events): void
         {
             parent::validate($events);
-            $this->credential->update([
-                'status' => CredentialStatus::Revoked,
-                'revoked_at' => now(),
-            ]);
+            $this->credential->update(['revoked_at' => now()]);
         }
     });
 
     DB::listen(function (QueryExecuted $query) use (&$credentialQueries): void {
         $sql = strtolower($query->sql);
 
-        if (str_contains($sql, 'application_credentials')) {
+        if (str_contains($sql, 'credentials')) {
             $credentialQueries[] = $sql;
         }
     });
@@ -1503,7 +1494,7 @@ it('erases a real session whose user and release metadata came only from its ver
     $audit = resolve(UserErasure::class)->erase(
         $context['application'],
         $applicationUserId,
-        $administrator,
+        testIdentity($administrator),
         true,
     );
     Queue::assertPushed(

@@ -8,7 +8,6 @@ use ArtisanBuild\BuiltForCloud\Contracts\AuthorizesCredentialVerbs;
 use ArtisanBuild\BuiltForCloud\Contracts\CredentialDeclaration;
 use ArtisanBuild\BuiltForCloud\Contracts\DeclaresSelfServiceMintPolicy;
 use ArtisanBuild\BuiltForCloud\Credential;
-use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialVerb;
 use ArtisanBuild\BuiltForCloud\Subject;
 use Illuminate\Http\Request;

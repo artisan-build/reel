@@ -9,6 +9,8 @@ use App\Models\Application;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
+use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKey;
+use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKeys;
 use ArtisanBuild\ReelClient\Envelope;
 use ArtisanBuild\ReelClient\KeyMaterial;
 use ArtisanBuild\ReelClient\SessionGrantContext;
@@ -912,5 +914,3 @@ class ChunkIngestor
         throw new IngestRejected($reason, $status);
     }
 }
-use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKey;
-use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKeys;

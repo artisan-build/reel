@@ -8,9 +8,7 @@ use App\Exceptions\RetentionRejected;
 use App\Http\Controllers\ApplicationUserErasureController;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
-use Tests\Support\User;
 use App\Models\UserErasureAudit;
 use App\Services\OperationalCounters;
 use App\Services\OrphanSweeper;
@@ -34,12 +32,13 @@ use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Process\Process;
+use Tests\Support\User;
 
 /** @param array<string, mixed> $attributes */
 function makeRetentionSession(array $attributes = []): RecordingSession
 {
     $application = $attributes['application'] ?? Application::factory()->create();
-    $credential = ApplicationCredential::factory()->for($application)->create();
+    $credential = activeReelCredential($application);
     $status = $attributes['status'] ?? RecordingSessionStatus::Ready;
     unset($attributes['application'], $attributes['status']);
     $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
@@ -141,7 +140,7 @@ it('deletes only overdue unprotected sessions while protected sessions survive t
     expect($ordinary->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
         ->and($ordinary->fresh()->manifest)->toBeNull()
         ->and($protected->fresh()->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($protected->fresh()->protected_by)->toBe($owner->getKey());
+        ->and($protected->fresh()->protected_by)->toBe((string) $owner->getKey());
     Storage::disk('local')->assertMissing($ordinaryObject)->assertExists($protectedObject);
 });
 
@@ -165,13 +164,13 @@ it('protects only ready sessions and cannot replace the first protection owner',
     $failed = makeRetentionSession(['status' => RecordingSessionStatus::Failed]);
     $protection = resolve(RecordingProtection::class);
 
-    expect($protection->protect($ready->getKey(), $firstOwner))->toBeTrue()
-        ->and($protection->protect($ready->getKey(), $otherUser))->toBeFalse();
-    expect($ready->fresh()->protected_by)->toBe($firstOwner->getKey())
+    expect($protection->protect($ready->getKey(), testIdentity($firstOwner)))->toBeTrue()
+        ->and($protection->protect($ready->getKey(), testIdentity($otherUser)))->toBeFalse();
+    expect($ready->fresh()->protected_by)->toBe((string) $firstOwner->getKey())
         ->and($ready->protectionEvents()->where('action', 'protected')->count())->toBe(1);
 
     try {
-        $protection->protect($failed->getKey(), $firstOwner);
+        $protection->protect($failed->getKey(), testIdentity($firstOwner));
         $this->fail('A failed session was protected.');
     } catch (RetentionRejected $rejection) {
         expect($rejection->reason)->toBe('session_not_protectable')
@@ -197,7 +196,7 @@ it('rejects a genuinely different ordinary user from unprotecting and preserves 
     ]))->assertForbidden()->assertSee('protection_owned_by_another_user');
 
     $session->refresh();
-    expect($session->protected_by)->toBe($owner->getKey())
+    expect($session->protected_by)->toBe((string) $owner->getKey())
         ->and($session->protected_at)->not->toBeNull()
         ->and($session->delete_not_before->getTimestamp())->toBe($originalDeadline->getTimestamp())
         ->and($session->protectionEvents()->count())->toBe(0)
@@ -210,16 +209,16 @@ it('allows only an administrator to unprotect when the protection owner has been
     $administrator = User::factory()->admin()->create();
     $thirdParty = User::factory()->create();
     $session = makeRetentionSession();
-    resolve(RecordingProtection::class)->protect($session->getKey(), $owner);
+    resolve(RecordingProtection::class)->protect($session->getKey(), testIdentity($owner));
     $owner->delete();
 
-    expect($session->fresh()->protected_by)->toBeNull()
+    expect($session->fresh()->protected_by)->toBe((string) $owner->getKey())
         ->and($session->fresh()->protected_at)->not->toBeNull();
-    expect(fn () => resolve(RecordingProtection::class)->unprotect($session->getKey(), $thirdParty))
+    expect(fn () => resolve(RecordingProtection::class)->unprotect($session->getKey(), testIdentity($thirdParty)))
         ->toThrow(RetentionRejected::class, 'protection_owned_by_another_user');
     expect($session->fresh()->protected_at)->not->toBeNull();
 
-    expect(resolve(RecordingProtection::class)->unprotect($session->getKey(), $administrator))->toBeTrue()
+    expect(resolve(RecordingProtection::class)->unprotect($session->getKey(), testIdentity($administrator)))->toBeTrue()
         ->and($session->fresh()->protected_at)->toBeNull();
 });
 
@@ -231,9 +230,9 @@ it('applies the later cooling deadline advertises its actor and allows another u
         'delete_not_before' => now()->addHour(),
     ]);
     $protection = resolve(RecordingProtection::class);
-    $protection->protect($session->getKey(), $owner);
+    $protection->protect($session->getKey(), testIdentity($owner));
     $unprotectedAt = now();
-    $protection->unprotect($session->getKey(), $owner);
+    $protection->unprotect($session->getKey(), testIdentity($owner));
     $session->refresh();
 
     expect($session->delete_not_before->getTimestamp())->toBe($unprotectedAt->addHours(72)->getTimestamp());
@@ -241,11 +240,11 @@ it('applies the later cooling deadline advertises its actor and allows another u
         'application' => $session->application,
         'recordingSession' => $session,
     ]))->assertOk()
-        ->assertSee("Unprotected by {$owner->name}")
+        ->assertSee('Unprotected by actor '.(string) $owner->getKey())
         ->assertSee($session->delete_not_before->toDayDateTimeString());
 
-    expect($protection->protect($session->getKey(), $newOwner))->toBeTrue()
-        ->and($session->fresh()->protected_by)->toBe($newOwner->getKey())
+    expect($protection->protect($session->getKey(), testIdentity($newOwner)))->toBeTrue()
+        ->and($session->fresh()->protected_by)->toBe((string) $newOwner->getKey())
         ->and($session->fresh()->protected_at)->not->toBeNull();
 });
 
@@ -257,9 +256,9 @@ it('never schedules unprotected deletion before a later ordinary expiry', functi
         'delete_not_before' => $expiresAt,
     ]);
     $protection = resolve(RecordingProtection::class);
-    $protection->protect($session->getKey(), $owner);
+    $protection->protect($session->getKey(), testIdentity($owner));
 
-    expect($protection->unprotect($session->getKey(), $owner))->toBeTrue();
+    expect($protection->unprotect($session->getKey(), testIdentity($owner)))->toBeTrue();
 
     $session->refresh();
     expect($session->delete_not_before->getTimestamp())->toBe($expiresAt->getTimestamp())
@@ -282,7 +281,7 @@ it('prevents ordinary deletion while an administrator immediately overrides prot
 
     $this->actingAs($owner)->delete($route)->assertForbidden();
     expect($session->fresh()->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($session->fresh()->protected_by)->toBe($owner->getKey());
+        ->and($session->fresh()->protected_by)->toBe((string) $owner->getKey());
     Storage::disk('local')->assertExists($object);
 
     $this->actingAs($administrator)->delete($route)->assertRedirect(route('sessions.index'));
@@ -328,7 +327,7 @@ it('requires exact erasure confirmation and audits a batch without the erased us
         DeleteUserErasureBatch::class,
         fn (DeleteUserErasureBatch $job): bool => $job->batchId === $audit->batch_id,
     );
-    expect($audit->actor_user_id)->toBe($administrator->getKey())
+    expect($audit->actor_id)->toBe((string) $administrator->getKey())
         ->and($audit->application_id)->toBe($application->getKey())
         ->and($audit->matched_count)->toBe(2)
         ->and($audit->deleted_count)->toBe(0)
@@ -403,7 +402,7 @@ it('holds every user-erasure administrator boundary and preserves data after for
     }
 
     try {
-        resolve(UserErasure::class)->erase($application, $applicationUserId, $viewer, true);
+        resolve(UserErasure::class)->erase($application, $applicationUserId, testIdentity($viewer), true);
         $this->fail('The erasure service accepted an ordinary viewer.');
     } catch (RetentionRejected $rejection) {
         expect($rejection->reason)->toBe('administrator_required')
@@ -424,7 +423,7 @@ it('serializes only the opaque batch id and lets an expired unique lock be re-di
     $applicationUserId = 'actual-queue-payload-secret';
     makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
 
-    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, testIdentity($administrator), true);
     $payload = json_decode((string) DB::table('jobs')->sole()->payload, true, flags: JSON_THROW_ON_ERROR);
     $serializedCommand = $payload['data']['command'];
 
@@ -449,12 +448,12 @@ it('rejects duplicate running erasure and resumes only running batches to comple
     $application = Application::factory()->create();
     $applicationUserId = 'running-erasure-target';
     $session = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
-    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, testIdentity($administrator), true);
 
     expect(fn () => resolve(UserErasure::class)->erase(
         $application,
         $applicationUserId,
-        $secondAdministrator,
+        testIdentity($secondAdministrator),
         true,
     ))->toThrow(RetentionRejected::class, 'erasure_already_running');
     expect(UserErasureAudit::query()->count())->toBe(1)
@@ -463,8 +462,7 @@ it('rejects duplicate running erasure and resumes only running batches to comple
 
     $completed = UserErasureAudit::query()->create([
         'batch_id' => (string) Str::uuid(),
-        'actor_user_id' => $administrator->getKey(),
-        'actor_name' => $administrator->name,
+        'actor_id' => (string) $administrator->getKey(),
         'application_id' => $application->getKey(),
         'requested_at' => now(),
         'completed_at' => now(),
@@ -498,7 +496,7 @@ it('records truthful partial erasure counts and resumes a partial batch by opaqu
     $applicationUserId = 'partial-erasure-target';
     $deleted = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
     $remaining = makeRetentionSession(['application' => $application, 'application_user_id' => $applicationUserId]);
-    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, $administrator, true);
+    $audit = resolve(UserErasure::class)->erase($application, $applicationUserId, testIdentity($administrator), true);
     resolve(RecordingDeletion::class)->delete($deleted->getKey(), 'completed_before_worker_failure');
 
     (new DeleteUserErasureBatch($audit->batch_id))->failed(new RuntimeException('worker hard failure'));
@@ -535,7 +533,7 @@ it('makes deletion terminal for protection and replay delivery with specific per
     ]);
     $session->transitionTo(RecordingSessionStatus::Deleting, 'test_deletion_started');
 
-    expect(fn () => resolve(RecordingProtection::class)->protect($session->getKey(), $viewer))
+    expect(fn () => resolve(RecordingProtection::class)->protect($session->getKey(), testIdentity($viewer)))
         ->toThrow(RetentionRejected::class, 'session_not_protectable');
     expect($session->fresh()->status)->toBe(RecordingSessionStatus::Deleting)
         ->and($session->fresh()->protected_at)->toBeNull()
@@ -561,8 +559,8 @@ it('removes temporary candidate and published objects only under the exact sessi
     Storage::disk('local')->put($candidate, 'candidate');
     Storage::disk('local')->put($outside, 'outside');
 
-    expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'test_exact_prefix', $administrator))->toBeTrue()
-        ->and(resolve(RecordingDeletion::class)->delete($session->getKey(), 'test_idempotent_retry', $administrator))->toBeTrue();
+    expect(resolve(RecordingDeletion::class)->delete($session->getKey(), 'test_exact_prefix', testIdentity($administrator)))->toBeTrue()
+        ->and(resolve(RecordingDeletion::class)->delete($session->getKey(), 'test_idempotent_retry', testIdentity($administrator)))->toBeTrue();
     expect($session->fresh()->status)->toBe(RecordingSessionStatus::Deleted)
         ->and($session->fresh()->manifest)->toBeNull()
         ->and($session->fresh()->chunks()->count())->toBe(0);
@@ -774,19 +772,12 @@ it('lets deleting win a real PostgreSQL row-lock race against protection', funct
     $application = Application::factory()->make();
     $application->setConnection($raceConnection);
     $application->save();
-    $credential = new ApplicationCredential;
-    $credential->setConnection($raceConnection);
-    $credential->forceFill([
-        'application_id' => $application->getKey(),
-        'algorithm' => ApplicationCredential::ALGORITHM,
-        'enrollment_code_hash' => hash('sha256', 'race'),
-        'enrollment_expires_at' => now()->addMinute(),
-    ])->save();
+    $credentialId = (string) Str::uuid();
     $session = new RecordingSession;
     $session->setConnection($raceConnection);
     $session->fill([
         'application_id' => $application->getKey(),
-        'application_credential_id' => $credential->getKey(),
+        'application_credential_id' => $credentialId,
         'session_id' => bin2hex(random_bytes(32)),
         'grant_id_hash' => hash('sha256', 'race'),
         'origin' => 'https://race.example',
@@ -824,7 +815,13 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 try {
     resolve(App\Services\RecordingProtection::class)->protect(
         (int) $argv[2],
-        App\Models\User::query()->findOrFail((int) $argv[3]),
+        new ArtisanBuild\BuiltForCloud\DomainIdentityContext(
+            $argv[3],
+            ArtisanBuild\BuiltForCloud\UserRole::Member,
+            ArtisanBuild\BuiltForCloud\AuthorityMode::Standalone,
+            1,
+            ArtisanBuild\BuiltForCloud\CredentialOwnership::Account,
+        ),
     );
     $result = ['protected' => true, 'reason' => null];
 } catch (App\Exceptions\RetentionRejected $rejection) {
@@ -887,19 +884,12 @@ it('lets protection win when a stale retention selection waits on the real Postg
     $application = Application::factory()->make();
     $application->setConnection($raceConnection);
     $application->save();
-    $credential = new ApplicationCredential;
-    $credential->setConnection($raceConnection);
-    $credential->forceFill([
-        'application_id' => $application->getKey(),
-        'algorithm' => ApplicationCredential::ALGORITHM,
-        'enrollment_code_hash' => hash('sha256', 'protection-race'),
-        'enrollment_expires_at' => now()->addMinute(),
-    ])->save();
+    $credentialId = (string) Str::uuid();
     $session = new RecordingSession;
     $session->setConnection($raceConnection);
     $session->fill([
         'application_id' => $application->getKey(),
-        'application_credential_id' => $credential->getKey(),
+        'application_credential_id' => $credentialId,
         'session_id' => bin2hex(random_bytes(32)),
         'grant_id_hash' => hash('sha256', 'protection-race'),
         'origin' => 'https://race.example',
@@ -969,7 +959,7 @@ PHP);
     $persisted = RecordingSession::on($raceConnection)->findOrFail($session->getKey());
     expect($result)->toBe(['outcome' => 'skipped_protected'])
         ->and($persisted->status)->toBe(RecordingSessionStatus::Ready)
-        ->and($persisted->protected_by)->toBe($actor->getKey())
+        ->and($persisted->protected_by)->toBe((string) $actor->getKey())
         ->and($persisted->retention_skip_reason)->toBe('protected_after_selection')
         ->and($persisted->retention_skipped_at)->not->toBeNull();
 
