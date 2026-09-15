@@ -5,13 +5,13 @@ namespace App\Services;
 use App\Enums\RecordingSessionStatus;
 use App\Exceptions\RetentionRejected;
 use App\Models\RecordingSession;
-use App\Models\User;
+use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 class RecordingProtection
 {
-    public function protect(int $recordingSessionId, User $actor): bool
+    public function protect(int $recordingSessionId, IdentityContext $actor): bool
     {
         return DB::transaction(function () use ($recordingSessionId, $actor): bool {
             $session = RecordingSession::query()->lockForUpdate()->findOrFail($recordingSessionId);
@@ -27,12 +27,11 @@ class RecordingProtection
             $occurredAt = now();
             $session->forceFill([
                 'protected_at' => $occurredAt,
-                'protected_by' => $actor->getKey(),
+                'protected_by' => $actor->actorId(),
                 'unprotected_at' => null,
             ])->save();
             $session->protectionEvents()->create([
-                'actor_user_id' => $actor->getKey(),
-                'actor_name' => $actor->name,
+                'actor_id' => $actor->actorId(),
                 'action' => 'protected',
                 'occurred_at' => $occurredAt,
             ]);
@@ -41,7 +40,7 @@ class RecordingProtection
         }, 3);
     }
 
-    public function unprotect(int $recordingSessionId, User $actor): bool
+    public function unprotect(int $recordingSessionId, IdentityContext $actor): bool
     {
         return DB::transaction(function () use ($recordingSessionId, $actor): bool {
             $session = RecordingSession::query()->lockForUpdate()->findOrFail($recordingSessionId);
@@ -54,7 +53,7 @@ class RecordingProtection
                 return false;
             }
 
-            if (! $actor->is_admin && ($session->protected_by === null || $session->protected_by !== $actor->getKey())) {
+            if ($session->protected_by === null || ! $actor->isSameActorOrAdminOrOwner($session->protected_by)) {
                 throw new RetentionRejected('protection_owned_by_another_user', 403);
             }
 
@@ -72,8 +71,7 @@ class RecordingProtection
                 'delete_not_before' => $deleteNotBefore,
             ])->save();
             $session->protectionEvents()->create([
-                'actor_user_id' => $actor->getKey(),
-                'actor_name' => $actor->name,
+                'actor_id' => $actor->actorId(),
                 'action' => 'unprotected',
                 'occurred_at' => $occurredAt,
             ]);

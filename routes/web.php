@@ -13,9 +13,7 @@ use App\Livewire\Applications\Show as ShowApplication;
 use App\Livewire\Sessions\Index as SessionIndex;
 use Illuminate\Support\Facades\Route;
 
-Route::view('/', 'welcome')->name('home');
-
-Route::middleware(['auth', 'verified'])->group(function (): void {
+Route::middleware('bfc.auth')->group(function (): void {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
     Route::livewire('sessions', SessionIndex::class)->name('sessions.index');
@@ -32,7 +30,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
     Route::delete('applications/{application}/sessions/{recordingSession}/protection', [RecordingProtectionController::class, 'destroy'])
         ->name('sessions.protection.destroy');
 
-    Route::middleware('admin')->prefix('applications')->group(function (): void {
+    Route::prefix('applications')->group(function (): void {
         Route::livewire('/', ApplicationIndex::class)->name('admin.applications.index');
         Route::livewire('create', CreateApplication::class)->name('admin.applications.create');
         Route::livewire('{application}', ShowApplication::class)->name('admin.applications.show');
@@ -42,5 +40,3 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             ->name('admin.application-users.destroy');
     });
 });
-
-require __DIR__.'/settings.php';

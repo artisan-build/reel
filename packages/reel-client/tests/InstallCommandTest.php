@@ -18,9 +18,8 @@ it('generates the private key locally and enrolls only the public key', function
     $this->app->useEnvironmentPath($directory);
 
     Http::fake([
-        'https://reel.example/api/applications/app-public-id/enrollment' => Http::response([
-            'credential_id' => 42,
-            'application_id' => 'app-public-id',
+        'https://reel.example/bfc/asymmetric-enrollments/app-public-id' => Http::response([
+            'credential_id' => 'test-created-credential-id',
             'algorithm' => 'RS256',
         ], 201),
     ]);
@@ -34,10 +33,10 @@ it('generates the private key locally and enrolls only the public key', function
     Http::assertSent(function (Request $request): bool {
         $publicKey = $request->data()['public_key'] ?? '';
 
-        expect($request->data())->toHaveKeys(['enrollment_code', 'algorithm', 'public_key'])
+        expect($request->data())->toHaveKeys(['enrollment_code', 'public_key'])
+            ->toHaveCount(2)
             ->not->toHaveKey('private_key')
             ->and($request['enrollment_code'])->toBe('one-use-code')
-            ->and($request['algorithm'])->toBe('RS256')
             ->and($publicKey)->toContain('BEGIN PUBLIC KEY')
             ->not->toContain('PRIVATE');
 
@@ -84,7 +83,7 @@ it('discloses the configured observability destination during interactive instal
     file_put_contents($directory.'/.env', "UNCHANGED=yes\n");
     $this->app->useEnvironmentPath($directory);
     Http::fake(['*' => Http::response([
-        'application_id' => 'app-public-id',
+        'credential_id' => 'test-created-credential-id',
         'algorithm' => 'RS256',
     ], 201)]);
 

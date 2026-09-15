@@ -12,7 +12,7 @@ use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingMarker;
 use App\Models\RecordingSession;
-use App\Models\User;
+use Tests\Support\User;
 use App\Models\UserErasureAudit;
 use App\Services\ChunkPrivacyValidator;
 use App\Services\UserErasure;

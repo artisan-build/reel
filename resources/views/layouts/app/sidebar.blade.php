@@ -1,3 +1,10 @@
+@php
+    $user = auth()->user();
+    $name = (string) data_get($user, 'name', config('app.name', 'Reel'));
+    $email = data_get($user, 'email');
+    $initials = \Illuminate\Support\Str::of($name)->explode(' ')->filter()->take(2)
+        ->map(fn (string $word): string => \Illuminate\Support\Str::substr($word, 0, 1))->implode('');
+@endphp
 <!DOCTYPE html>
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}" class="dark">
     <head>
@@ -18,11 +25,9 @@
                     <flux:sidebar.item icon="play-circle" :href="route('sessions.index')" :current="request()->routeIs('sessions.*', 'applications.sessions.*')" wire:navigate>
                         {{ __('Sessions') }}
                     </flux:sidebar.item>
-                    @if (auth()->user()->is_admin)
-                        <flux:sidebar.item icon="rectangle-stack" :href="route('admin.applications.index')" :current="request()->routeIs('admin.applications.*')" wire:navigate>
-                            {{ __('Applications') }}
-                        </flux:sidebar.item>
-                    @endif
+                    <flux:sidebar.item icon="rectangle-stack" :href="route('admin.applications.index')" :current="request()->routeIs('admin.applications.*')" wire:navigate>
+                        {{ __('Applications') }}
+                    </flux:sidebar.item>
                 </flux:sidebar.group>
             </flux:sidebar.nav>
 
@@ -38,7 +43,7 @@
                 </flux:sidebar.item>
             </flux:sidebar.nav>
 
-            <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
+             <x-desktop-user-menu class="hidden lg:block" :name="$name" :email="$email" :initials="$initials" />
         </flux:sidebar>
 
         <!-- Mobile User Menu -->
@@ -49,7 +54,7 @@
 
             <flux:dropdown position="top" align="end">
                 <flux:profile
-                    :initials="auth()->user()->initials()"
+                    :initials="$initials"
                     icon-trailing="chevron-down"
                 />
 
@@ -58,13 +63,13 @@
                         <div class="p-0 text-sm font-normal">
                             <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                                 <flux:avatar
-                                    :name="auth()->user()->name"
-                                    :initials="auth()->user()->initials()"
+                                    :name="$name"
+                                    :initials="$initials"
                                 />
 
                                 <div class="grid flex-1 text-start text-sm leading-tight">
-                                    <flux:heading class="truncate">{{ auth()->user()->name }}</flux:heading>
-                                    <flux:text class="truncate">{{ auth()->user()->email }}</flux:text>
+                                    <flux:heading class="truncate">{{ $name }}</flux:heading>
+                                    <flux:text class="truncate">{{ $email }}</flux:text>
                                 </div>
                             </div>
                         </div>
@@ -73,21 +78,21 @@
                     <flux:menu.separator />
 
                     <flux:menu.radio.group>
-                        <flux:menu.item :href="route('profile.edit')" icon="cog" wire:navigate>
-                            {{ __('Settings') }}
+                        <flux:menu.item :href="route('bfc.ui.home')" icon="cog" wire:navigate>
+                            {{ __('Account') }}
                         </flux:menu.item>
                     </flux:menu.radio.group>
 
                     <flux:menu.separator />
 
-                    <form method="POST" action="{{ route('logout') }}" class="w-full">
+                    <form method="POST" action="{{ route('bfc.logout') }}" class="w-full">
                         @csrf
                         <flux:menu.item
                             as="button"
                             type="submit"
                             icon="arrow-right-start-on-rectangle"
                             class="w-full cursor-pointer"
-                            data-test="logout-button"
+                            data-testid="logout-button"
                         >
                             {{ __('Log out') }}
                         </flux:menu.item>

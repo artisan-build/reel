@@ -10,7 +10,7 @@ use App\Jobs\DeleteUserErasureBatch;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
-use App\Models\User;
+use Tests\Support\User;
 use App\Models\UserErasureAudit;
 use App\Services\OperationalCounters;
 use App\Services\OrphanSweeper;

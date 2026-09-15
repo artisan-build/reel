@@ -8,7 +8,7 @@ use App\Livewire\Applications\Create;
 use App\Livewire\Applications\Show;
 use App\Models\Application;
 use App\Models\ApplicationCredential;
-use App\Models\User;
+use Tests\Support\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Routing\Route as RoutingRoute;

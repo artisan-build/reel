@@ -4,7 +4,7 @@
         <div class="mt-4 flex flex-wrap items-start justify-between gap-4">
             <div>
                 <flux:heading size="xl">{{ $this->application->name }}</flux:heading>
-                <flux:text class="mt-1 font-mono text-xs" data-test="application-public-id">{{ $this->application->public_id }}</flux:text>
+                <flux:text class="mt-1 font-mono text-xs" data-testid="application-public-id">{{ $this->application->public_id }}</flux:text>
             </div>
 
             <flux:button
@@ -18,13 +18,13 @@
     </div>
 
     @if ($enrollmentCode)
-        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-test="enrollment-code">
+        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-testid="enrollment-code">
             <flux:heading>{{ __('Copy this enrollment code now') }}</flux:heading>
             <flux:text class="mt-2">{{ __('It expires in 15 minutes and will never be shown again.') }}</flux:text>
             <code class="mt-4 block overflow-x-auto rounded-lg bg-zinc-950 px-4 py-3 text-sm text-white">{{ $enrollmentCode }}</code>
         </div>
     @elseif ($enrollmentExpired)
-        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-test="enrollment-code-expired">
+        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-testid="enrollment-code-expired">
             <flux:heading>{{ __('Enrollment code expired') }}</flux:heading>
             <flux:text class="mt-2">{{ __('The one-time code expired before it was displayed. Rotate the credential to issue a new code.') }}</flux:text>
         </div>
@@ -39,7 +39,7 @@
             </div>
             <div>
                 <dt class="text-sm font-medium text-zinc-500">{{ __('Enrollment endpoint') }}</dt>
-                <dd class="mt-1 break-all font-mono text-sm">{{ route('applications.enrollment.store', $this->application) }}</dd>
+                <dd class="mt-1 break-all font-mono text-sm">{{ url('/bfc/asymmetric-enrollments/'.$this->application->public_id) }}</dd>
             </div>
         </dl>
     </section>
@@ -81,32 +81,35 @@
                 <flux:heading>{{ __('Signing credentials') }}</flux:heading>
                 <flux:text class="mt-2">{{ __('Rotate before revoking to preserve a brief overlap between active public keys.') }}</flux:text>
             </div>
-            <flux:button wire:click="rotateCredential" icon="arrow-path">{{ __('Rotate credential') }}</flux:button>
+            <flux:button wire:click="issueCredential" icon="plus">{{ __('Issue credential') }}</flux:button>
         </div>
 
         <div class="mt-6 divide-y divide-zinc-200 dark:divide-zinc-700">
-            @foreach ($this->application->credentials as $credential)
+            @foreach ($this->credentials as $credential)
                 <div class="flex flex-wrap items-center justify-between gap-4 py-4" wire:key="credential-{{ $credential->id }}">
                     <div>
                         <div class="flex items-center gap-2">
-                            <span class="font-mono text-sm">#{{ $credential->id }}</span>
-                            @if ($credential->status?->value === 'active')
+                            <span class="font-mono text-sm">{{ $credential->id }}</span>
+                            @if ($credential->status === 'active')
                                 <flux:badge color="green">{{ __('Active') }}</flux:badge>
-                            @elseif ($credential->status?->value === 'revoked')
+                            @elseif ($credential->status === 'revoked')
                                 <flux:badge color="red">{{ __('Revoked') }}</flux:badge>
                             @else
                                 <flux:badge color="amber">{{ __('Pending enrollment') }}</flux:badge>
                             @endif
                         </div>
                         <flux:text class="mt-1 text-xs">
-                            {{ $credential->enrolled_at ? __('Enrolled :date', ['date' => $credential->enrolled_at->toDayDateTimeString()]) : __('Not enrolled') }}
+                            {{ $credential->createdAt ? __('Issued :date', ['date' => $credential->createdAt->toDayDateTimeString()]) : __('Issue date unavailable') }}
                         </flux:text>
                     </div>
 
-                    @if ($credential->status?->value !== 'revoked')
-                        <flux:button variant="danger" size="sm" wire:click="revokeCredential({{ $credential->id }})" wire:confirm="{{ __('Revoke this credential? Existing recordings will not be deleted.') }}">
+                    @if ($credential->status !== 'revoked')
+                        <div class="flex gap-2">
+                        <flux:button size="sm" wire:click="rotateCredential('{{ $credential->id }}')">{{ __('Rotate') }}</flux:button>
+                        <flux:button variant="danger" size="sm" wire:click="revokeCredential('{{ $credential->id }}')" wire:confirm="{{ __('Revoke this credential? Existing recordings will not be deleted.') }}">
                             {{ __('Revoke') }}
                         </flux:button>
+                        </div>
                     @endif
                 </div>
             @endforeach

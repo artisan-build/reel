@@ -9,15 +9,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * @mixin IdeHelperReplayView
  */
-#[Fillable(['user_id', 'application_id', 'recording_session_id', 'viewed_at'])]
+#[Fillable(['actor_id', 'application_id', 'recording_session_id', 'viewed_at'])]
 class ReplayView extends Model
 {
-    /** @return BelongsTo<User, $this> */
-    public function user(): BelongsTo
-    {
-        return $this->belongsTo(User::class);
-    }
-
     /** @return BelongsTo<Application, $this> */
     public function application(): BelongsTo
     {

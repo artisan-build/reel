@@ -9,7 +9,7 @@ use App\Models\Application;
 use App\Models\ApplicationCredential;
 use App\Models\RecordingSession;
 use App\Models\ReplayView;
-use App\Models\User;
+use Tests\Support\User;
 use App\Services\ReplayManifest;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Support\Facades\DB;

@@ -15,7 +15,7 @@ return new class extends Migration
             $table->timestamp('unprotected_at')->nullable();
             $table->timestamp('deletion_started_at')->nullable();
             $table->timestamp('deletion_completed_at')->nullable();
-            $table->unsignedBigInteger('deletion_actor_id')->nullable();
+            $table->string('deletion_actor_id')->nullable();
             $table->string('deletion_reason')->nullable();
             $table->unsignedInteger('deletion_attempts')->default(0);
             $table->string('deletion_last_error')->nullable();
@@ -34,8 +34,7 @@ SQL);
         Schema::create('recording_protection_events', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('recording_session_id')->constrained()->cascadeOnDelete();
-            $table->unsignedBigInteger('actor_user_id')->nullable();
-            $table->string('actor_name');
+            $table->string('actor_id')->nullable();
             $table->enum('action', ['protected', 'unprotected']);
             $table->timestamp('occurred_at');
 
@@ -45,8 +44,7 @@ SQL);
         Schema::create('user_erasure_audits', function (Blueprint $table): void {
             $table->id();
             $table->uuid('batch_id')->unique();
-            $table->unsignedBigInteger('actor_user_id');
-            $table->string('actor_name');
+            $table->string('actor_id');
             $table->foreignId('application_id')->constrained()->restrictOnDelete();
             $table->timestamp('requested_at');
             $table->timestamp('completed_at')->nullable();

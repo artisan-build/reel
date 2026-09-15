@@ -2,12 +2,10 @@
 
 namespace App\Services;
 
-use App\Enums\CredentialStatus;
 use App\Enums\RecordingEpochStatus;
 use App\Enums\RecordingSessionStatus;
 use App\Exceptions\IngestRejected;
 use App\Models\Application;
-use App\Models\ApplicationCredential;
 use App\Models\RecordingChunk;
 use App\Models\RecordingEpoch;
 use App\Models\RecordingSession;
@@ -45,6 +43,7 @@ class ChunkIngestor
 
     public function __construct(
         private readonly SessionGrantVerifier $grantVerifier,
+        private readonly AsymmetricVerificationKeys $verificationKeys,
         private readonly ChunkPrivacyValidator $privacyValidator,
         private readonly OperationalCounters $operationalCounters,
         private readonly ObjectMutationLock $objectLocks,
@@ -364,31 +363,20 @@ class ChunkIngestor
 
     /**
      * @param  array<string, mixed>  $envelope
-     * @return array{ApplicationCredential, Plain}
+     * @return array{AsymmetricVerificationKey, Plain}
      */
     private function verifyGrant(Application $application, array $envelope): array
     {
-        $credentials = $application->credentials()
-            ->where('status', CredentialStatus::Active->value)
-            ->whereNotNull('public_key')
-            ->whereNotNull('enrolled_at')
-            ->whereNull('revoked_at')
-            ->get();
+        $credentials = $this->verificationKeys->for(ReelCredentialScope::for($application));
 
         foreach ($credentials as $credential) {
-            if (! $credential->isActive()
-                || $credential->algorithm !== ApplicationCredential::ALGORITHM
-                || $credential->public_key === null) {
-                continue;
-            }
-
             try {
                 $token = $this->grantVerifier->verify(
                     $envelope['grant'],
-                    $credential->public_key,
+                    $credential->publicKey,
                     new SessionGrantContext(
                         applicationId: $application->public_id,
-                        credentialId: KeyMaterial::credentialId($credential->public_key),
+                        credentialId: KeyMaterial::credentialId($credential->publicKey),
                         allowedOrigins: $application->allowed_origins,
                         sessionId: $envelope['session_id'],
                         maximumCeilings: [
@@ -416,7 +404,7 @@ class ChunkIngestor
      */
     private function persist(
         Application $application,
-        ApplicationCredential $credential,
+        AsymmetricVerificationKey $credential,
         array $envelope,
         string $compressed,
         int $decompressedBytes,
@@ -452,15 +440,7 @@ class ChunkIngestor
                 $this->reject('application_disabled', 403);
             }
 
-            $lockedCredential = ApplicationCredential::query()
-                ->where('application_id', $lockedApplication->getKey())
-                ->lockForUpdate()
-                ->find($credential->getKey());
-
-            if (! $lockedCredential instanceof ApplicationCredential
-                || ! $lockedCredential->isActive()
-                || $lockedCredential->algorithm !== ApplicationCredential::ALGORITHM
-                || $lockedCredential->public_key !== $credential->public_key) {
+            if (! $this->credentialIsUsable($lockedApplication, $credential)) {
                 $this->reject('inactive_credential', 401);
             }
 
@@ -474,7 +454,7 @@ class ChunkIngestor
                 $this->assertNewSessionAllowed($lockedApplication);
                 $session = $this->createSession(
                     $lockedApplication,
-                    $lockedCredential,
+                    $credential,
                     $envelope,
                     $origin,
                     $grantId,
@@ -488,7 +468,7 @@ class ChunkIngestor
             } else {
                 $this->assertSessionBinding(
                     $session,
-                    $lockedCredential,
+                    $credential,
                     $origin,
                     $grantId,
                     $ceilings,
@@ -660,7 +640,7 @@ class ChunkIngestor
      */
     private function createSession(
         Application $application,
-        ApplicationCredential $credential,
+        AsymmetricVerificationKey $credential,
         array $envelope,
         string $origin,
         string $grantId,
@@ -674,7 +654,7 @@ class ChunkIngestor
         $session = new RecordingSession;
         $session->fill([
             'application_id' => $application->getKey(),
-            'application_credential_id' => $credential->getKey(),
+            'application_credential_id' => $credential->credentialId,
             'session_id' => $envelope['session_id'],
             'grant_id_hash' => hash('sha256', $grantId),
             'origin' => $origin,
@@ -813,7 +793,7 @@ class ChunkIngestor
      */
     private function failEpoch(
         Application $application,
-        ApplicationCredential $credential,
+        AsymmetricVerificationKey $credential,
         array $envelope,
         string $origin,
         string $grantId,
@@ -840,15 +820,9 @@ class ChunkIngestor
             $reason,
         ): void {
             $lockedApplication = Application::query()->lockForUpdate()->find($application->getKey());
-            $lockedCredential = ApplicationCredential::query()
-                ->where('application_id', $application->getKey())
-                ->lockForUpdate()
-                ->find($credential->getKey());
-
             if (! $lockedApplication instanceof Application
                 || ! $lockedApplication->ingest_enabled
-                || ! $lockedCredential instanceof ApplicationCredential
-                || ! $lockedCredential->isActive()) {
+                || ! $this->credentialIsUsable($lockedApplication, $credential)) {
                 $this->reject('inactive_ingest_authority', 401);
             }
 
@@ -862,7 +836,7 @@ class ChunkIngestor
                 $this->assertNewSessionAllowed($lockedApplication);
                 $session = $this->createSession(
                     $lockedApplication,
-                    $lockedCredential,
+                    $credential,
                     $envelope,
                     $origin,
                     $grantId,
@@ -886,7 +860,7 @@ class ChunkIngestor
     /** @param array<string, int> $ceilings */
     private function assertSessionBinding(
         RecordingSession $session,
-        ApplicationCredential $credential,
+        AsymmetricVerificationKey $credential,
         string $origin,
         string $grantId,
         array $ceilings,
@@ -895,7 +869,7 @@ class ChunkIngestor
         ?string $applicationUserId,
         ?string $releaseId,
     ): void {
-        if ($session->application_credential_id !== $credential->getKey()
+        if ($session->application_credential_id !== $credential->credentialId
             || ! hash_equals($session->grant_id_hash, hash('sha256', $grantId))
             || $session->origin !== $origin
             || $session->max_chunks !== $ceilings['max_chunks']
@@ -907,6 +881,18 @@ class ChunkIngestor
             || $session->release_id !== $releaseId) {
             $this->reject('session_grant_conflict', 409);
         }
+    }
+
+    private function credentialIsUsable(Application $application, AsymmetricVerificationKey $credential): bool
+    {
+        foreach ($this->verificationKeys->for(ReelCredentialScope::for($application)) as $candidate) {
+            if (hash_equals($candidate->credentialId, $credential->credentialId)
+                && hash_equals($candidate->publicKey, $credential->publicKey)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $envelope */
@@ -926,3 +912,5 @@ class ChunkIngestor
         throw new IngestRejected($reason, $status);
     }
 }
+use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKey;
+use ArtisanBuild\BuiltForCloud\AsymmetricVerificationKeys;

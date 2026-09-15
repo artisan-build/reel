@@ -50,14 +50,13 @@ final class InstallCommand extends Command
             $response = $http->asJson()
                 ->acceptJson()
                 ->timeout(15)
-                ->post($url.'/api/applications/'.rawurlencode($applicationId).'/enrollment', [
+                ->post($url.'/bfc/asymmetric-enrollments/'.rawurlencode($applicationId), [
                     'enrollment_code' => $enrollmentCode,
-                    'algorithm' => 'RS256',
                     'public_key' => $key['public'],
                 ]);
 
             if (! $response->created()
-                || $response->json('application_id') !== $applicationId
+                || ! is_string($response->json('credential_id'))
                 || $response->json('algorithm') !== 'RS256') {
                 throw new RuntimeException('Reel rejected the enrollment request.');
             }
