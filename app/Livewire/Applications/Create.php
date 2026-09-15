@@ -49,6 +49,7 @@ class Create extends Component
 
         $this->enrollmentCode = $enrollment->secret->reveal();
         $this->createdApplicationId = $application->public_id;
+        $this->form->reset();
     }
 
     public function render(): View
