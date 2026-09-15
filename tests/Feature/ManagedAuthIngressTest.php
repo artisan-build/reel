@@ -59,8 +59,11 @@ function configureReelManagedAuthority(int $generation = 7, ?string $secret = nu
     return $activeFixture;
 }
 
-function enterReelManagedSession(ManagedAuthorityFixture $fixture, string $code): User
-{
+function enterReelManagedSession(
+    ManagedAuthorityFixture $fixture,
+    string $code,
+    string $subject = 'subject-fixture',
+): User {
     $handoff = beginReelManagedHandoff();
     test()->withSession([ManagedHandoff::SESSION_NONCE_KEY => $handoff['nonce']])
         ->get(route('bfc.managed.callback', [
@@ -69,7 +72,7 @@ function enterReelManagedSession(ManagedAuthorityFixture $fixture, string $code)
         ], absolute: false))
         ->assertRedirect('/');
 
-    return User::query()->where('scalpels_id', 'subject-fixture')->sole();
+    return User::query()->where('scalpels_id', $subject)->sole();
 }
 
 /** @return array{state: string, nonce: string, session_id: string} */
@@ -288,6 +291,130 @@ it('applies managed role and ordering changes on the next Reel request', functio
         ->and($authority?->managed_connection_response_sequence)->toBe(1)
         ->and(auth('web')->id())->toBe($user->getKey());
 });
+
+it('does not let a delayed authority response regress accepted Reel role or ordering state', function (): void {
+    $fixture = configureReelManagedAuthority();
+    $fixture->exchangeOverrides = ['role' => 'member'];
+    $user = enterReelManagedSession($fixture, 'managed-delayed-response-code');
+
+    $fixture->confirmationOverrides = [
+        'role' => 'admin',
+        'roster_version' => 10,
+        'response_sequence' => 15,
+    ];
+    CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+
+    $fixture->confirmationOverrides = [
+        'role' => 'member',
+        'roster_version' => 9,
+        'response_sequence' => 14,
+        'responded_at' => '2026-09-15T12:04:00+00:00',
+    ];
+    CarbonImmutable::setTestNow('2026-09-15T12:10:00+00:00');
+    $this->get(route('dashboard'))->assertOk();
+
+    $user->refresh();
+    $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
+    expect(reelManagedConfirmationCalls($fixture))->toBe(2)
+        ->and($user->role)->toBe('admin')
+        ->and($user->managed_membership_generation)->toBe(7)
+        ->and($user->managed_membership_roster_version)->toBe(10)
+        ->and($user->managed_membership_response_sequence)->toBe(15)
+        ->and($user->managed_membership_responded_at)->toBe('2026-09-15T12:05:00.000+00:00')
+        ->and($authority?->managed_connection_generation)->toBe(7)
+        ->and($authority?->managed_connection_roster_version)->toBe(10)
+        ->and($authority?->managed_connection_response_sequence)->toBe(15)
+        ->and(auth('web')->id())->toBe($user->getKey())
+        ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
+});
+
+it('keeps subject membership and installation connection ordering independent through Reel ingress', function (
+    array $arrivalOrder,
+    int $connectionRoster,
+    int $connectionSequence,
+): void {
+    $fixture = configureReelManagedAuthority();
+    $users = [];
+
+    foreach (['a', 'b'] as $subjectKey) {
+        $subject = 'subject-'.$subjectKey;
+        $fixture->exchangeOverrides = [
+            'scalpels_id' => $subject,
+            'membership_id' => 'membership-'.$subjectKey,
+            'display_name' => 'Fixture '.strtoupper($subjectKey),
+            'contact_email' => $subject.'@example.test',
+            'role' => 'member',
+        ];
+        $users[$subjectKey] = enterReelManagedSession(
+            $fixture,
+            'managed-order-'.$subjectKey,
+            $subject,
+        );
+    }
+
+    $fixture->confirmationResponder = static function (array $request, array $payload): mixed {
+        $response = $request['scalpels_id'] === 'subject-a'
+            ? [
+                'role' => 'admin',
+                'roster_version' => 20,
+                'response_sequence' => 30,
+                'responded_at' => '2026-09-15T12:04:30+00:00',
+            ]
+            : [
+                'role' => 'member',
+                'roster_version' => 30,
+                'response_sequence' => 20,
+                'responded_at' => '2026-09-15T12:04:45+00:00',
+            ];
+
+        return Http::response(array_merge($payload, $response));
+    };
+
+    CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
+    foreach ($arrivalOrder as $subjectKey) {
+        $user = $users[$subjectKey]->refresh();
+        auth('web')->login($user);
+        $this->withSession([StandaloneAccess::SESSION_VERSION_KEY => $user->auth_session_version])
+            ->get(route('dashboard'))
+            ->assertOk();
+        expect(auth('web')->id())->toBe($user->getKey())
+            ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
+    }
+
+    $a = $users['a']->fresh();
+    $b = $users['b']->fresh();
+    $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
+    expect(reelManagedConfirmationCalls($fixture))->toBe(2)
+        ->and($a?->role)->toBe('admin')
+        ->and($a?->managed_membership_generation)->toBe(7)
+        ->and($a?->managed_membership_roster_version)->toBe(20)
+        ->and($a?->managed_membership_response_sequence)->toBe(30)
+        ->and($b?->role)->toBe('member')
+        ->and($b?->managed_membership_generation)->toBe(7)
+        ->and($b?->managed_membership_roster_version)->toBe(30)
+        ->and($b?->managed_membership_response_sequence)->toBe(20)
+        ->and($authority?->managed_connection_generation)->toBe(7)
+        ->and($authority?->managed_connection_roster_version)->toBe($connectionRoster)
+        ->and($authority?->managed_connection_response_sequence)->toBe($connectionSequence);
+
+    CarbonImmutable::setTestNow('2026-09-15T12:05:01+00:00');
+    foreach (['a' => 'admin', 'b' => 'member'] as $subjectKey => $role) {
+        $user = $users[$subjectKey]->fresh();
+        expect($user)->toBeInstanceOf(User::class);
+        auth('web')->login($user);
+        $this->withSession([StandaloneAccess::SESSION_VERSION_KEY => $user->auth_session_version])
+            ->get(route('dashboard'))
+            ->assertOk();
+        expect(auth('web')->id())->toBe($user->getKey())
+            ->and(auth('web')->user()?->role)->toBe($role)
+            ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
+    }
+    expect(reelManagedConfirmationCalls($fixture))->toBe(2);
+})->with([
+    'subject A then subject B' => [['a', 'b'], 20, 30],
+    'subject B then subject A' => [['b', 'a'], 30, 20],
+]);
 
 it('ends a removed managed session before Reel state can mutate', function (): void {
     Storage::fake('local');
