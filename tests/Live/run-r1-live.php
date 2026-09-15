@@ -46,6 +46,7 @@ function r1Diagnostic(string $output, array $environment): string
     }
 
     $output = preg_replace([
+        '~(?:/[^/\s]+)*/reel-r1-live-[a-f0-9]+(?:/[^\s]*)?~',
         '/-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----/s',
         '/(?i)((?:--)?(?:password|secret|token|api[_-]?key|access[_-]?key(?:[_-]?id)?|private[_-]?key|root[_-]?user)\s*[=:]\s*)\S+/',
         '/\bbase64:[A-Za-z0-9+\/=]{32,}\b/',
@@ -53,6 +54,7 @@ function r1Diagnostic(string $output, array $environment): string
         '/\breel-r1-(?:pg|redis|minio)-[a-f0-9]+\b/',
         '/\b127\.0\.0\.1:[0-9]{2,5}\b/',
     ], [
+        '[redacted path]',
         '[redacted private key]',
         '$1[redacted]',
         '[redacted key]',
@@ -81,6 +83,27 @@ function r1Diagnostic(string $output, array $environment): string
     }
 
     return $truncated ? $marker.ltrim($output) : $output;
+}
+
+/** @param array<string, string> $environment */
+function r1ServerDiagnostic(
+    string $applicationDirectory,
+    array $environment,
+    string $runDirectory,
+): string {
+    $environment['RUN_DIRECTORY_SECRET'] = $runDirectory;
+    $logPath = $applicationDirectory.'/storage/logs/laravel.log';
+    $logSize = is_file($logPath) ? filesize($logPath) : false;
+
+    if (is_int($logSize) && $logSize > 0) {
+        $readBytes = R1_DIAGNOSTIC_MAX_BYTES * 4;
+        $log = file_get_contents($logPath, false, null, max(0, $logSize - $readBytes), $readBytes);
+        if (is_string($log) && trim($log) !== '') {
+            return r1Diagnostic($log, $environment);
+        }
+    }
+
+    return r1Diagnostic('', $environment);
 }
 
 /**
@@ -477,6 +500,26 @@ if (in_array('--self-check', $argv, true)) {
             r1Fail('The live runner self-check could not prove bounded redacted diagnostics for both output channels.');
         }
     }
+    $serverDiagnostic = r1Diagnostic(
+        "production.ERROR: SelfCheckException\n".
+        "/tmp/reel-r1-live-deadbeef/candidate/storage/logs/laravel.log\n",
+        [],
+    );
+    if (! str_contains($serverDiagnostic, 'SelfCheckException')
+        || str_contains($serverDiagnostic, 'reel-r1-live-deadbeef')) {
+        r1Fail('The live runner self-check could not prove server diagnostic redaction.');
+    }
+    foreach ([
+        'function r1ServerDiagnostic(',
+        "'/storage/logs/laravel.log'",
+        'R1_DIAGNOSTIC_MAX_BYTES * 4',
+        'r1ServerDiagnostic($app, $environment, $runDirectory)',
+        'server diagnostic:',
+    ] as $requiredServerDiagnosticSource) {
+        if (! str_contains($source, $requiredServerDiagnosticSource)) {
+            r1Fail('The live runner self-check requires the bounded sanitized server-error diagnostic path.');
+        }
+    }
     foreach (['create-admin', '--local', 'reel:smoke', 'schedule:run', '127.0.0.1', 'finally'] as $required) {
         if (! str_contains($source, $required)) {
             r1Fail('The live runner self-check is missing '.$required.'.');
@@ -764,6 +807,13 @@ PHP);
             'REEL_R1_BROWSER_APPLICATION_PATH' => (string) ($browserState['application_path'] ?? ''),
             'REEL_R1_BROWSER_SESSION_PATH' => (string) ($browserState['session_path'] ?? ''),
         ], 'standalone Chrome browser lane', 300);
+    } catch (Throwable $browserFailure) {
+        throw new RuntimeException(
+            $browserFailure->getMessage()."\nserver diagnostic:\n".
+            r1ServerDiagnostic($app, $environment, $runDirectory),
+            0,
+            $browserFailure,
+        );
     } finally {
         $browserPassword = '';
         r1Clipboard('');
