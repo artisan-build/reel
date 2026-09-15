@@ -207,6 +207,25 @@ it('creates an application and displays its enrollment code exactly once', funct
         ->assertDontSee($code);
 });
 
+it('does not create another application or credential when creation is submitted twice', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+
+    $component = Livewire::test(Create::class)
+        ->set('form.name', 'Double submit '.fake()->uuid())
+        ->set('form.allowedOrigins', 'https://double-submit.example.com')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect(Application::query()->count())->toBe(1)
+        ->and(Credential::query()->count())->toBe(1);
+
+    $component->call('save')
+        ->assertHasErrors(['form.name', 'form.allowedOrigins']);
+
+    expect(Application::query()->count())->toBe(1)
+        ->and(Credential::query()->count())->toBe(1);
+});
+
 it('reveals an issued enrollment code only in the immediate response', function (): void {
     $this->actingAs(User::factory()->admin()->create());
     $application = Application::factory()->create();
