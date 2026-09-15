@@ -246,7 +246,7 @@ function postIngestEnvelope(array $envelope, string $origin = 'https://monitored
  */
 function activeCredentialForScope(BoundCredentialScope $scope, array $key, ?DateTimeInterface $expiresAt = null): Credential
 {
-    $mint = app(MintCredential::class)(
+    $mint = resolve(MintCredential::class)(
         $scope->subject,
         new MintOptions(
             kind: CredentialKind::Asymmetric,
@@ -256,7 +256,7 @@ function activeCredentialForScope(BoundCredentialScope $scope, array $key, ?Date
             boundScope: $scope,
         ),
     );
-    app(CompleteAsymmetricEnrollment::class)(
+    resolve(CompleteAsymmetricEnrollment::class)(
         $mint->secret?->reveal() ?? throw new RuntimeException('Enrollment code was not delivered.'),
         $scope,
         new Rs256PublicKey($key['public']),
@@ -663,7 +663,7 @@ it('rejects every unusable credential lifecycle state before ingest mutation', f
         $credential = activeCredentialForScope($scope, $key, $expiresAt);
 
         if ($state === 'revoked') {
-            app(RevokeCredential::class)($credential->id);
+            resolve(RevokeCredential::class)($credential->id);
         } elseif ($state === 'expired') {
             $this->travel(61)->seconds();
         } else {
@@ -693,7 +693,7 @@ it('allows canonical overlap then cuts over through public rotation enrollment a
     });
     $context = ingestContext();
     $first = $context['credential'];
-    $rotation = app(RotateCredential::class)(
+    $rotation = resolve(RotateCredential::class)(
         $first->id,
         new RotateOptions(codeTtlSeconds: 900),
     ) ?? throw new RuntimeException('Rotation did not return a replacement.');
@@ -729,7 +729,7 @@ it('allows canonical overlap then cuts over through public rotation enrollment a
         'grant' => ingestGrant($secondContext, ['grant_id' => 'overlap-second']),
     ]))->assertAccepted()->assertExactJson(['accepted' => true, 'duplicate' => false]);
 
-    app(RevokeCredential::class)($first->id);
+    resolve(RevokeCredential::class)($first->id);
     $retiredContext = [
         ...$firstContext,
         'session_id' => hash('sha256', 'retired-first'),
@@ -1678,7 +1678,7 @@ it('rechecks public credential revocation under the PostgreSQL ingest write lock
         public function validate(mixed $events): void
         {
             parent::validate($events);
-            app(RevokeCredential::class)($this->credential->id);
+            resolve(RevokeCredential::class)($this->credential->id);
         }
     });
 

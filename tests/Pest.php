@@ -95,7 +95,7 @@ function testRsaKeyPair(bool $fresh = false): array
 function pendingReelCredential(Application $application, ?AuditActor $actor = null): array
 {
     $scope = ReelCredentialScope::for($application);
-    $mint = app(MintCredential::class)(
+    $mint = resolve(MintCredential::class)(
         $scope->subject,
         new MintOptions(
             kind: CredentialKind::Asymmetric,
@@ -117,7 +117,7 @@ function activeReelCredential(Application $application, ?array $keyPair = null):
 {
     $pending = pendingReelCredential($application);
     $keyPair ??= testRsaKeyPair();
-    app(CompleteAsymmetricEnrollment::class)(
+    resolve(CompleteAsymmetricEnrollment::class)(
         $pending['code'],
         ReelCredentialScope::for($application),
         new Rs256PublicKey($keyPair['public']),

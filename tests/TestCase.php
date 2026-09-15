@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 
 abstract class TestCase extends BaseTestCase
 {
+    #[\Override]
     public function actingAs(Authenticatable $user, $guard = null)
     {
         DB::table('bfc_authority')->updateOrInsert(

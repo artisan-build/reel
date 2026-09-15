@@ -32,7 +32,7 @@ class ReplayPlayerController extends Controller
         abort_unless(is_string($channel) && preg_match('/^[a-f0-9]{96}$/', $channel) === 1, 404);
 
         $session->setRelation('application', $application);
-        $identity = app(IdentityContext::class);
+        $identity = resolve(IdentityContext::class);
         abort_unless($identity->canUseProduct(), 403);
         $validSignature = $request->hasValidSignature();
         $payload = $validSignature

@@ -116,7 +116,7 @@ function r1Run(array $command, string $directory, array $environment, string $la
 function r1Environment(array $overrides = []): array
 {
     $environment = getenv();
-    $environment = is_array($environment) ? array_filter($environment, 'is_string') : [];
+    $environment = is_array($environment) ? array_filter($environment, is_string(...)) : [];
 
     return array_merge($environment, $overrides);
 }

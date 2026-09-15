@@ -17,7 +17,7 @@ class AdminRecordingDeletionController extends Controller
         RecordingDeletion $deletion,
     ): RedirectResponse {
         $session = $application->recordingSessions()->where('session_id', $recordingSession)->firstOrFail();
-        $actor = app(IdentityContext::class);
+        $actor = resolve(IdentityContext::class);
         abort_unless($actor->canUseProduct(), 403);
 
         if (! $deletion->delete($session->getKey(), 'operator_deleted', $actor)) {

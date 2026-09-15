@@ -14,7 +14,7 @@ class Index extends Component
 {
     public function mount(): void
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
     }
 
     /**
@@ -23,7 +23,7 @@ class Index extends Component
     #[Computed]
     public function applications(): Collection
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
 
         return Application::query()->latest()->get();
     }

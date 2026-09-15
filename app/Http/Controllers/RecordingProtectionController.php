@@ -18,7 +18,7 @@ class RecordingProtectionController extends Controller
         RecordingProtection $protection,
     ): RedirectResponse {
         $session = $application->recordingSessions()->where('session_id', $recordingSession)->firstOrFail();
-        $actor = app(IdentityContext::class);
+        $actor = resolve(IdentityContext::class);
         abort_unless($actor->canUseProduct(), 403);
 
         try {
@@ -37,7 +37,7 @@ class RecordingProtectionController extends Controller
         RecordingProtection $protection,
     ): RedirectResponse {
         $session = $application->recordingSessions()->where('session_id', $recordingSession)->firstOrFail();
-        $actor = app(IdentityContext::class);
+        $actor = resolve(IdentityContext::class);
         abort_unless($actor->canUseProduct(), 403);
 
         try {

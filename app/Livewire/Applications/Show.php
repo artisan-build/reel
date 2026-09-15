@@ -33,7 +33,7 @@ class Show extends Component
 
     public function mount(Application $application): void
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
         $this->applicationId = $application->public_id;
         $this->form->fillFrom($application);
     }
@@ -79,7 +79,7 @@ class Show extends Component
         $scope = ReelCredentialScope::for($this->application());
 
         return array_values(array_filter(
-            app(ListCredentials::class)($scope->subject),
+            resolve(ListCredentials::class)($scope->subject),
             static fn (CredentialSummary $credential): bool => $credential->kind === CredentialKind::Asymmetric
                 && $credential->purpose === CredentialPurpose::Signing
                 && $credential->subjectType === $scope->subject->type
@@ -89,7 +89,7 @@ class Show extends Component
 
     public function updateApplication(): void
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
         $this->application()->update($this->form->validatedData());
 
         unset($this->application);
@@ -98,7 +98,7 @@ class Show extends Component
 
     public function toggleIngest(): void
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
         $application = $this->application();
         $application->update([
             'ingest_enabled' => ! $application->ingest_enabled,

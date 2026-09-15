@@ -2,7 +2,6 @@
 
 namespace App\Providers;
 
-use App\Models\Application;
 use App\Services\ReelEnrollmentScopeResolver;
 use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\Contracts\ResolvesAsymmetricEnrollmentScope;

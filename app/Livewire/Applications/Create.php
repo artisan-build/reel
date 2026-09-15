@@ -21,7 +21,7 @@ class Create extends Component
 
     public function mount(): void
     {
-        abort_unless(app(IdentityContext::class)->canUseProduct(), 403);
+        abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
     }
 
     public function save(MintCredential $mint, IdentityContext $identity): void

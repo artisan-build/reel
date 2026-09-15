@@ -33,8 +33,6 @@ namespace App\Models{
  * @property int $max_daily_chunks
  * @property int $max_daily_compressed_bytes
  * @property int $max_ingest_requests_per_minute
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ApplicationCredential> $credentials
- * @property-read int|null $credentials_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingMarker> $recordingMarkers
  * @property-read int|null $recording_markers_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingSession> $recordingSessions
@@ -69,41 +67,6 @@ namespace App\Models{
  */
 	#[\AllowDynamicProperties]
 	class IdeHelperApplication {}
-}
-
-namespace App\Models{
-/**
- * @property int $id
- * @property int $application_id
- * @property string|null $public_key
- * @property string $algorithm
- * @property \App\Enums\CredentialStatus|null $status
- * @property string|null $enrollment_code_hash
- * @property \Carbon\CarbonImmutable|null $enrollment_expires_at
- * @property \Carbon\CarbonImmutable|null $enrolled_at
- * @property \Carbon\CarbonImmutable|null $revoked_at
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property-read \App\Models\Application $application
- * @method static \Database\Factories\ApplicationCredentialFactory factory($count = null, $state = [])
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential newModelQuery()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential newQuery()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereAlgorithm($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereEnrolledAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereEnrollmentCodeHash($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereEnrollmentExpiresAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential wherePublicKey($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereRevokedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereStatus($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationCredential whereUpdatedAt($value)
- * @mixin \Eloquent
- */
-	#[\AllowDynamicProperties]
-	class IdeHelperApplicationCredential {}
 }
 
 namespace App\Models{
@@ -324,14 +287,12 @@ namespace App\Models{
  * @property-read \App\Models\Application $application
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingChunk> $chunks
  * @property-read int|null $chunks_count
- * @property-read \App\Models\ApplicationCredential $credential
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingEpoch> $epochs
  * @property-read int|null $epochs_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingMarker> $markers
  * @property-read int|null $markers_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingProtectionEvent> $protectionEvents
  * @property-read int|null $protection_events_count
- * @property-read \App\Models\User|null $protectionOwner
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ReplayView> $replayViews
  * @property-read int|null $replay_views_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingSessionTransition> $transitions
@@ -444,7 +405,6 @@ namespace App\Models{
  * @property \Carbon\CarbonImmutable|null $updated_at
  * @property-read \App\Models\Application $application
  * @property-read \App\Models\RecordingSession $recordingSession
- * @property-read \App\Models\User $user
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView query()
@@ -459,46 +419,6 @@ namespace App\Models{
  */
 	#[\AllowDynamicProperties]
 	class IdeHelperReplayView {}
-}
-
-namespace App\Models{
-/**
- * @property int $id
- * @property string $name
- * @property string $email
- * @property \Carbon\CarbonImmutable|null $email_verified_at
- * @property string $password
- * @property string|null $remember_token
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property string|null $two_factor_secret
- * @property string|null $two_factor_recovery_codes
- * @property string|null $two_factor_confirmed_at
- * @property bool $is_admin
- * @property-read \Illuminate\Notifications\DatabaseNotificationCollection<int, \Illuminate\Notifications\DatabaseNotification> $notifications
- * @property-read int|null $notifications_count
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \Laravel\Passkeys\Passkey> $passkeys
- * @property-read int|null $passkeys_count
- * @method static \Database\Factories\UserFactory factory($count = null, $state = [])
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User newModelQuery()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User newQuery()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereEmail($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereEmailVerifiedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereIsAdmin($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereName($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User wherePassword($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereRememberToken($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereTwoFactorConfirmedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereTwoFactorRecoveryCodes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereTwoFactorSecret($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUpdatedAt($value)
- * @mixin \Eloquent
- */
-	#[\AllowDynamicProperties]
-	class IdeHelperUser {}
 }
 
 namespace App\Models{

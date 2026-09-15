@@ -115,7 +115,7 @@ class Index extends Component
     #[Computed]
     public function sessions(): LengthAwarePaginator
     {
-        $viewerId = app(IdentityContext::class)->actorId();
+        $viewerId = resolve(IdentityContext::class)->actorId();
         $query = RecordingSession::query()->with('application');
 
         $this->applyDateFilter($query, 'started_at', '>=', $this->startedFrom);
