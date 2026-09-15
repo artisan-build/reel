@@ -36,6 +36,23 @@ package's supported account/member lifecycle; Reel does not rebuild those two un
 For any state-changing Built for Cloud Artisan command used during local recovery or diagnostics, pass `--local`
 so it cannot be forwarded to Laravel Cloud unintentionally.
 
+### First-Owner recovery
+
+When the standalone first-Owner lifecycle is unavailable, an operator may target a specific Cloud environment:
+
+```bash
+php artisan create-admin --environment=<environment>
+```
+
+The selected environment executes the following non-interactive inner command with operator-supplied placeholders:
+
+```bash
+php artisan create-admin --execute --email=<email> --name=<name> --password-hash=<bcrypt-hash> --no-interaction
+```
+
+Do not print or persist the password or generated hash. These Cloud-targeted forms are distinct from local
+state-changing Built for Cloud commands, which must include `--local` as stated above.
+
 ## Create and enroll an application
 
 1. Sign in to Reel and open **Applications**.
