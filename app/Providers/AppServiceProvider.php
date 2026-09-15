@@ -6,6 +6,7 @@ use App\Services\ReelEnrollmentScopeResolver;
 use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\Contracts\ResolvesAsymmetricEnrollmentScope;
 use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureUserIsAuthenticated;
 use ArtisanBuild\BuiltForCloud\InstallationAuthority;
 use ArtisanBuild\BuiltForCloud\User;
 use Carbon\CarbonImmutable;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Livewire\Livewire;
 use RuntimeException;
 
 class AppServiceProvider extends ServiceProvider
@@ -40,6 +42,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Livewire::addPersistentMiddleware(EnsureUserIsAuthenticated::class);
         $this->ensureCacheStoreIsConfigured();
         $this->configureDefaults();
         $this->configureRateLimiting();

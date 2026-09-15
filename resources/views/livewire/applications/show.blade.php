@@ -21,12 +21,7 @@
         <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-testid="enrollment-code">
             <flux:heading>{{ __('Copy this enrollment code now') }}</flux:heading>
             <flux:text class="mt-2">{{ __('It expires in 15 minutes and will never be shown again.') }}</flux:text>
-            <code class="mt-4 block overflow-x-auto rounded-lg bg-zinc-950 px-4 py-3 text-sm text-white">{{ $enrollmentCode }}</code>
-        </div>
-    @elseif ($enrollmentExpired)
-        <div class="rounded-xl border border-amber-300 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-950/40" data-testid="enrollment-code-expired">
-            <flux:heading>{{ __('Enrollment code expired') }}</flux:heading>
-            <flux:text class="mt-2">{{ __('The one-time code expired before it was displayed. Rotate the credential to issue a new code.') }}</flux:text>
+            <code class="mt-4 block overflow-x-auto rounded-lg bg-zinc-950 px-4 py-3 text-sm text-white" data-testid="enrollment-code-value">{{ $enrollmentCode }}</code>
         </div>
     @endif
 
@@ -101,11 +96,22 @@
                         <flux:text class="mt-1 text-xs">
                             {{ $credential->createdAt ? __('Issued :date', ['date' => $credential->createdAt->toDayDateTimeString()]) : __('Issue date unavailable') }}
                         </flux:text>
+                        @if ($credential->status === 'active' && $credential->rotatedAt)
+                            <flux:text class="mt-1 text-xs">{{ __('Its replacement is pending enrollment. Reissue here only if that delivery was lost.') }}</flux:text>
+                        @elseif ($credential->status === 'pending' && ! collect($this->credentials)->contains(fn ($candidate) => $candidate->status === 'active' && $candidate->rotatedAt))
+                            <flux:text class="mt-1 text-xs">{{ __('This initial pending credential has no predecessor and cannot be reissued. Revoke it and issue a new credential if its code was lost.') }}</flux:text>
+                        @elseif ($credential->status === 'pending')
+                            <flux:text class="mt-1 text-xs">{{ __('This pending successor can only be reissued from its active predecessor.') }}</flux:text>
+                        @endif
                     </div>
 
                     @if ($credential->status !== 'revoked')
                         <div class="flex gap-2">
-                        <flux:button size="sm" wire:click="rotateCredential('{{ $credential->id }}')">{{ __('Rotate') }}</flux:button>
+                        @if ($credential->status === 'active' && $credential->rotatedAt)
+                            <flux:button size="sm" wire:click="reissuePendingCredential('{{ $credential->id }}')">{{ __('Reissue pending code') }}</flux:button>
+                        @elseif ($credential->status === 'active')
+                            <flux:button size="sm" wire:click="rotateCredential('{{ $credential->id }}')">{{ __('Rotate') }}</flux:button>
+                        @endif
                         <flux:button variant="danger" size="sm" wire:click="revokeCredential('{{ $credential->id }}')" wire:confirm="{{ __('Revoke this credential? Existing recordings will not be deleted.') }}">
                             {{ __('Revoke') }}
                         </flux:button>

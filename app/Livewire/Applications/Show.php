@@ -13,6 +13,7 @@ use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialSummary;
+use ArtisanBuild\BuiltForCloud\Exceptions\RotationRefused;
 use ArtisanBuild\BuiltForCloud\MintOptions;
 use ArtisanBuild\BuiltForCloud\RevokeOutcome;
 use ArtisanBuild\BuiltForCloud\RotateOptions;
@@ -31,6 +32,8 @@ class Show extends Component
     #[Locked]
     public string $applicationId;
 
+    private ?string $enrollmentCode = null;
+
     public function mount(Application $application): void
     {
         abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
@@ -40,27 +43,8 @@ class Show extends Component
 
     public function render(): View
     {
-        $enrollment = session('enrollment');
-        $enrollmentCode = null;
-        $enrollmentExpired = false;
-
-        if (is_array($enrollment)
-            && ($enrollment['application_id'] ?? null) === $this->applicationId
-            && is_string($enrollment['code'] ?? null)
-            && is_int($enrollment['expires_at'] ?? null)
-        ) {
-            session()->forget('enrollment');
-
-            if ($enrollment['expires_at'] > now()->getTimestamp()) {
-                $enrollmentCode = $enrollment['code'];
-            } else {
-                $enrollmentExpired = true;
-            }
-        }
-
         return view('livewire.applications.show', [
-            'enrollmentCode' => $enrollmentCode,
-            'enrollmentExpired' => $enrollmentExpired,
+            'enrollmentCode' => $this->enrollmentCode,
         ]);
     }
 
@@ -120,16 +104,15 @@ class Show extends Component
             boundScope: $scope,
         ), AuditActor::boundUser($identity->actorId()));
 
-        $this->flashEnrollment($application, $enrollment->secret?->reveal());
+        $this->revealEnrollment($enrollment->secret?->reveal());
+        unset($this->credentials);
     }
 
     public function rotateCredential(string $credentialId, RotateCredential $rotate, IdentityContext $identity): void
     {
         abort_unless($identity->canUseProduct(), 403);
-        $application = $this->application();
-        abort_unless(collect($this->credentials())->contains(
-            static fn (CredentialSummary $credential): bool => $credential->id === $credentialId,
-        ), 404);
+        $credential = $this->credential($credentialId);
+        abort_unless($credential->status === 'active' && $credential->rotatedAt === null, 409);
         $result = $rotate(
             $credentialId,
             new RotateOptions(codeTtlSeconds: 900),
@@ -137,19 +120,28 @@ class Show extends Component
         );
 
         abort_unless($result !== null, 404);
-        $this->flashEnrollment($application, $result->mint->secret?->reveal());
+        $this->revealEnrollment($result->mint->secret?->reveal());
+        unset($this->credentials);
     }
 
-    private function flashEnrollment(Application $application, ?string $code): void
+    public function reissuePendingCredential(string $predecessorId, RotateCredential $rotate, IdentityContext $identity): void
     {
-        abort_unless($code !== null, 409);
+        abort_unless($identity->canUseProduct(), 403);
+        $credential = $this->credential($predecessorId);
+        abort_unless($credential->status === 'active' && $credential->rotatedAt !== null, 409);
+        try {
+            $result = $rotate(
+                $predecessorId,
+                new RotateOptions(codeTtlSeconds: 900, reissuePendingDelivery: true),
+                AuditActor::boundUser($identity->actorId()),
+            );
+        } catch (RotationRefused) {
+            abort(409);
+        }
 
-        session()->flash('enrollment', [
-            'application_id' => $application->public_id,
-            'code' => $code,
-            'expires_at' => now()->addMinutes(15)->getTimestamp(),
-        ]);
-        $this->redirectRoute('admin.applications.show', ['application' => $application]);
+        abort_unless($result !== null, 404);
+        $this->revealEnrollment($result->mint->secret?->reveal());
+        unset($this->credentials);
     }
 
     public function revokeCredential(string $credentialId, RevokeCredential $revoke, IdentityContext $identity): void
@@ -168,5 +160,21 @@ class Show extends Component
 
         unset($this->application, $this->credentials);
         Flux::toast(variant: 'success', text: __('Credential revoked.'));
+    }
+
+    private function credential(string $credentialId): CredentialSummary
+    {
+        $credential = collect($this->credentials())->first(
+            static fn (CredentialSummary $credential): bool => $credential->id === $credentialId,
+        );
+        abort_unless($credential instanceof CredentialSummary, 404);
+
+        return $credential;
+    }
+
+    private function revealEnrollment(?string $code): void
+    {
+        abort_unless($code !== null, 409);
+        $this->enrollmentCode = $code;
     }
 }

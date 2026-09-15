@@ -10,14 +10,33 @@ use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\CredentialStatus;
+use ArtisanBuild\BuiltForCloud\OnboardingToken;
 use ArtisanBuild\BuiltForCloud\SubjectType;
 use Illuminate\Database\QueryException;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Routing\Route as RoutingRoute;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use Tests\Support\User;
+
+/** @param list<MessageLogged> $logs */
+function expectEnrollmentCodeNotPersisted(string $code, array $logs): void
+{
+    $cacheStore = Cache::store()->getStore();
+    $cacheState = (new ReflectionProperty($cacheStore, 'storage'))->getValue($cacheStore);
+
+    expect(serialize(session()->all()))->not->toContain($code)
+        ->and(serialize($cacheState))->not->toContain($code)
+        ->and(serialize($logs))->not->toContain($code);
+
+    foreach (['applications', 'credentials', 'onboarding_tokens', 'credential_protocol_bindings', 'credential_audit_events', 'cache', 'jobs', 'failed_jobs'] as $table) {
+        expect(serialize(DB::table($table)->get()->all()))->not->toContain($code);
+    }
+}
 
 it('stores the complete application policy behind an opaque public route key', function (): void {
     $application = Application::factory()->create([
@@ -83,8 +102,12 @@ it('renders test-created applications on the index for Members', function (): vo
 
 it('creates an application and displays its enrollment code exactly once', function (): void {
     $this->actingAs(User::factory()->admin()->create());
+    $logs = [];
+    Log::listen(static function (MessageLogged $event) use (&$logs): void {
+        $logs[] = $event;
+    });
 
-    Livewire::test(Create::class)
+    $component = Livewire::test(Create::class)
         ->set('form.name', 'Storefront')
         ->set('form.allowedOrigins', "https://store.example.com\nhttp://localhost:8000")
         ->set('form.samplingPercent', 25)
@@ -93,21 +116,41 @@ it('creates an application and displays its enrollment code exactly once', funct
 
     $application = Application::query()->sole();
     $credential = Credential::query()->where('subject_ref', 'application:'.$application->public_id)->sole();
-    $code = session('enrollment.code');
+    $code = enrollmentCodeFromHtml($component->html());
 
     expect($code)->toBeString()->not->toBeEmpty()
         ->and($credential->status)->toBe(CredentialStatus::Pending)
-        ->and($credential->toArray())->not->toContain($code);
+        ->and($credential->toArray())->not->toContain($code)
+        ->and(serialize($component->snapshot))->not->toContain($code)
+        ->and($component->html())->toContain(route('admin.applications.show', $application));
+    expectEnrollmentCodeNotPersisted($code, $logs);
 
-    $firstDisplay = $this->get(route('admin.applications.show', $application))
+    $component->call('$refresh');
+    expect($component->html())->not->toContain($code);
+
+    $this->get(route('admin.applications.show', $application))
         ->assertOk()
-        ->assertSee('data-testid="application-signing-credentials"', false);
+        ->assertDontSee($code);
+});
 
-    expect($firstDisplay->getContent())->toContain($code);
+it('reveals an issued enrollment code only in the immediate response', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+    $application = Application::factory()->create();
+    $logs = [];
+    Log::listen(static function (MessageLogged $event) use (&$logs): void {
+        $logs[] = $event;
+    });
 
-    $secondDisplay = $this->get(route('admin.applications.show', $application))->assertOk();
+    $component = Livewire::test(Show::class, ['application' => $application])
+        ->call('issueCredential')
+        ->assertHasNoErrors();
+    $code = enrollmentCodeFromHtml($component->html());
 
-    expect($secondDisplay->getContent())->not->toContain($code);
+    expect(serialize($component->snapshot))->not->toContain($code);
+    expectEnrollmentCodeNotPersisted($code, $logs);
+    $component->call('$refresh');
+    expect($component->html())->not->toContain($code);
+    $this->get(route('admin.applications.show', $application))->assertDontSee($code);
 });
 
 it('rejects policy changes below the immutable inputs baseline', function (): void {
@@ -217,6 +260,7 @@ it('allows Members to run every application management action', function (): voi
         'toggleIngest' => [],
         'issueCredential' => [],
         'rotateCredential' => [],
+        'reissuePendingCredential' => [],
         'revokeCredential' => [$credential->id],
     ];
     $publicMethods = collect((new ReflectionClass(Show::class))->getMethods(ReflectionMethod::IS_PUBLIC))
@@ -234,24 +278,97 @@ it('allows Members to run every application management action', function (): voi
         ->assertHasNoErrors();
 });
 
-it('does not display an enrollment code after it expires', function (): void {
+it('does not redisplay an enrollment code after its immediate response', function (): void {
     $this->actingAs(User::factory()->admin()->create());
 
-    Livewire::test(Create::class)
+    $component = Livewire::test(Create::class)
         ->set('form.name', 'Delayed setup')
         ->set('form.allowedOrigins', 'https://delayed.example.com')
         ->call('save')
         ->assertHasNoErrors();
 
     $application = Application::query()->sole();
-    $code = session('enrollment.code');
-
-    $this->travel(16)->minutes();
+    $code = enrollmentCodeFromHtml($component->html());
 
     $this->get(route('admin.applications.show', $application))
         ->assertOk()
-        ->assertDontSeeText($code)
-        ->assertSee('Enrollment code expired');
+        ->assertDontSeeText($code);
+});
+
+it('rotates an active credential with one immediate pending delivery', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+    $application = Application::factory()->create();
+    $source = activeReelCredential($application);
+    $logs = [];
+    Log::listen(static function (MessageLogged $event) use (&$logs): void {
+        $logs[] = $event;
+    });
+
+    $component = Livewire::test(Show::class, ['application' => $application])
+        ->call('rotateCredential', $source->id)
+        ->assertHasNoErrors();
+    $code = enrollmentCodeFromHtml($component->html());
+    $replacement = Credential::query()->whereKeyNot($source->id)->sole();
+
+    expect($source->refresh()->status)->toBe(CredentialStatus::Active)
+        ->and($source->rotated_at)->not->toBeNull()
+        ->and($replacement->status)->toBe(CredentialStatus::Pending)
+        ->and(serialize($component->snapshot))->not->toContain($code)
+        ->and(OnboardingToken::query()->where('durable_credential_id', $replacement->id)->value('expires_at')->diffInSeconds(now(), true))->toBeLessThanOrEqual(900);
+    expectEnrollmentCodeNotPersisted($code, $logs);
+});
+
+it('reissues lost pending delivery from its active predecessor exactly once', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+    $application = Application::factory()->create();
+    $source = activeReelCredential($application);
+    $logs = [];
+    Log::listen(static function (MessageLogged $event) use (&$logs): void {
+        $logs[] = $event;
+    });
+    $rotation = Livewire::test(Show::class, ['application' => $application])
+        ->call('rotateCredential', $source->id);
+    $abandonedCode = enrollmentCodeFromHtml($rotation->html());
+    $abandoned = Credential::query()->whereKeyNot($source->id)->sole();
+
+    $reissue = Livewire::test(Show::class, ['application' => $application])
+        ->assertSee('Reissue pending code')
+        ->call('reissuePendingCredential', $source->id)
+        ->assertHasNoErrors();
+    $replacementCode = enrollmentCodeFromHtml($reissue->html());
+
+    expect($replacementCode)->not->toBe($abandonedCode)
+        ->and($abandoned->refresh()->revoked_at)->not->toBeNull()
+        ->and(serialize($reissue->snapshot))->not->toContain($replacementCode)
+        ->and(Credential::query()->where('status', CredentialStatus::Pending)->whereNull('revoked_at')->count())->toBe(1);
+    expectEnrollmentCodeNotPersisted($replacementCode, $logs);
+    $this->postJson('/bfc/asymmetric-enrollments/'.$application->public_id, [
+        'enrollment_code' => $abandonedCode,
+        'public_key' => testRsaKeyPair(fresh: true)['public'],
+    ])->assertNotFound();
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->call('reissuePendingCredential', $source->id)
+        ->assertStatus(409);
+    expect(Credential::query()->where('status', CredentialStatus::Pending)->whereNull('revoked_at')->count())->toBe(1);
+
+    $reissue->call('$refresh');
+    expect($reissue->html())->not->toContain($replacementCode);
+});
+
+it('does not describe or treat an initial pending credential as directly reissuable', function (): void {
+    $this->actingAs(User::factory()->admin()->create());
+    $application = Application::factory()->create();
+    $pending = pendingReelCredential($application)['credential'];
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->assertSee('This initial pending credential has no predecessor and cannot be reissued.')
+        ->assertDontSee('Reissue pending code')
+        ->call('reissuePendingCredential', $pending->id)
+        ->assertStatus(409);
+
+    expect($pending->refresh()->revoked_at)->toBeNull()
+        ->and(Credential::query()->count())->toBe(1);
 });
 
 it('stores no private key column in package credential schema', function (): void {

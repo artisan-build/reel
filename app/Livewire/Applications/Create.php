@@ -10,6 +10,7 @@ use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\CredentialKind;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\MintOptions;
+use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Title;
 use Livewire\Component;
@@ -18,6 +19,10 @@ use Livewire\Component;
 class Create extends Component
 {
     public ApplicationForm $form;
+
+    private ?string $enrollmentCode = null;
+
+    private ?string $createdApplicationId = null;
 
     public function mount(): void
     {
@@ -42,11 +47,15 @@ class Create extends Component
         });
         abort_unless($enrollment->secret !== null, 500);
 
-        session()->flash('enrollment', [
-            'application_id' => $application->public_id,
-            'code' => $enrollment->secret->reveal(),
-            'expires_at' => now()->addMinutes(15)->getTimestamp(),
+        $this->enrollmentCode = $enrollment->secret->reveal();
+        $this->createdApplicationId = $application->public_id;
+    }
+
+    public function render(): View
+    {
+        return view('livewire.applications.create', [
+            'enrollmentCode' => $this->enrollmentCode,
+            'createdApplicationId' => $this->createdApplicationId,
         ]);
-        $this->redirectRoute('admin.applications.show', ['application' => $application]);
     }
 }

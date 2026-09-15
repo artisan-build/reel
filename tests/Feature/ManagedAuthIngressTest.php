@@ -8,6 +8,8 @@ use App\Models\Application;
 use App\Models\RecordingSession;
 use App\Models\UserErasureAudit;
 use ArtisanBuild\BuiltForCloud\AuthorityMode;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureConsoleSession;
+use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureUserIsAuthenticated;
 use ArtisanBuild\BuiltForCloud\InstallationAuthority;
 use ArtisanBuild\BuiltForCloud\ManagedAuthClient;
 use ArtisanBuild\BuiltForCloud\ManagedHandoff;
@@ -17,12 +19,17 @@ use ArtisanBuild\BuiltForCloud\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Routing\Route as LaravelRoute;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Testing\TestResponse;
+use Livewire\Drawer\Utils;
+use Livewire\LivewireManager;
+use Tests\Support\User as UserFactory;
 
 require_once __DIR__.'/../../vendor/artisan-build/built-for-cloud/tests/Fixtures/ManagedAuthorityFixture.php';
 
@@ -100,6 +107,30 @@ function reelManagedConfirmationCalls(ManagedAuthorityFixture $fixture): int
         $fixture->calls,
         static fn (array $call): bool => $call['path'] === '/managed-auth/v1/memberships/confirm',
     ));
+}
+
+/** @return array<string, mixed> */
+function reelLivewireSnapshot(TestResponse $page): array
+{
+    return Utils::extractAttributeDataFromHtml($page->getContent(), 'wire:snapshot');
+}
+
+/** @param array<string, mixed> $snapshot */
+function postReelLivewireUpdate(array $snapshot, string $method, array $params = []): TestResponse
+{
+    Auth::forgetGuards();
+
+    return test()->postJson(app(LivewireManager::class)->getUpdateUri(), [
+        'components' => [[
+            'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+            'updates' => [],
+            'calls' => [[
+                'path' => '',
+                'method' => $method,
+                'params' => $params,
+            ]],
+        ]],
+    ], ['X-Livewire' => 'true']);
 }
 
 beforeEach(function (): void {
@@ -471,4 +502,82 @@ it('ends a removed managed session before Reel state can mutate', function (): v
         ->and(UserErasureAudit::query()->count())->toBe(0);
     Storage::disk('local')->assertExists($object);
     Queue::assertNotPushed(DeleteUserErasureBatch::class);
+});
+
+it('applies the package human gate to real Livewire updates after standalone session revocation', function (): void {
+    $persistentMiddleware = app(LivewireManager::class)->getPersistentMiddleware();
+    expect($persistentMiddleware)->toContain(EnsureUserIsAuthenticated::class)
+        ->and(array_search(EnsureConsoleSession::class, $persistentMiddleware, true))
+        ->toBeLessThan(array_search(EnsureUserIsAuthenticated::class, $persistentMiddleware, true));
+
+    $user = UserFactory::factory()->create();
+    $application = Application::factory()->create([
+        'name' => 'Ended principal listing marker',
+        'ingest_enabled' => true,
+    ]);
+    $this->post('/bfc/login', [
+        'email' => $user->email,
+        'password' => 'test-created-password',
+    ])->assertRedirect();
+    $this->withSession(['session-revocation-proof' => 'present']);
+    $mutationSnapshot = reelLivewireSnapshot(
+        $this->get(route('admin.applications.show', $application))->assertOk(),
+    );
+    $listingSnapshot = reelLivewireSnapshot(
+        $this->get(route('sessions.index'))->assertOk()->assertSeeText($application->name),
+    );
+
+    $user->increment('auth_session_version');
+
+    postReelLivewireUpdate($mutationSnapshot, 'toggleIngest')
+        ->assertUnauthorized()
+        ->assertSessionMissing('session-revocation-proof');
+    expect($application->refresh()->ingest_enabled)->toBeTrue()
+        ->and(auth('web')->check())->toBeFalse();
+
+    postReelLivewireUpdate($listingSnapshot, '$refresh')
+        ->assertUnauthorized()
+        ->assertDontSee($application->name);
+});
+
+it('applies managed removal at the five-minute boundary before a real Livewire mutation', function (): void {
+    $fixture = configureReelManagedAuthority();
+    $user = enterReelManagedSession($fixture, 'managed-livewire-removal-code');
+    $application = Application::factory()->create(['ingest_enabled' => true]);
+    $snapshot = reelLivewireSnapshot(
+        $this->get(route('admin.applications.show', $application))->assertOk(),
+    );
+
+    $fixture->confirmationOverrides = ['membership_status' => 'removed'];
+    CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
+
+    postReelLivewireUpdate($snapshot, 'toggleIngest')->assertUnauthorized();
+
+    expect(reelManagedConfirmationCalls($fixture))->toBe(1)
+        ->and($application->refresh()->ingest_enabled)->toBeTrue()
+        ->and($user->refresh()->status)->toBe('inactive')
+        ->and(auth('web')->check())->toBeFalse()
+        ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBeNull();
+});
+
+it('invalidates an inactive principal before a real Livewire mutation', function (): void {
+    $user = UserFactory::factory()->create();
+    $application = Application::factory()->create(['ingest_enabled' => true]);
+    $this->post('/bfc/login', [
+        'email' => $user->email,
+        'password' => 'test-created-password',
+    ])->assertRedirect();
+    $this->withSession(['inactive-session-proof' => 'present']);
+    $snapshot = reelLivewireSnapshot(
+        $this->get(route('admin.applications.show', $application))->assertOk(),
+    );
+
+    DB::table('users')->where('id', $user->getKey())->update(['status' => 'inactive']);
+
+    postReelLivewireUpdate($snapshot, 'toggleIngest')
+        ->assertForbidden()
+        ->assertSessionMissing('inactive-session-proof');
+    Auth::forgetGuards();
+    expect($application->refresh()->ingest_enabled)->toBeTrue()
+        ->and(auth('web')->check())->toBeFalse();
 });

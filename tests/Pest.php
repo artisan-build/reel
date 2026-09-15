@@ -136,3 +136,10 @@ function testIdentity(BuiltForCloudUser $user, ?string $actorId = null): DomainI
         CredentialOwnership::Account,
     );
 }
+
+function enrollmentCodeFromHtml(string $html): string
+{
+    preg_match('/data-testid="enrollment-code-value"[^>]*>([^<]+)</', $html, $matches);
+
+    return html_entity_decode($matches[1] ?? throw new RuntimeException('The immediate response did not contain an enrollment code.'));
+}

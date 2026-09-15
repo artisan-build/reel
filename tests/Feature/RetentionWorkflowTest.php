@@ -436,7 +436,7 @@ it('drives each package role through the Reel application and retention flow aft
     ])->assertRedirect(route('bfc.ui.home', absolute: false));
     $this->get(route('dashboard'))->assertOk();
 
-    Livewire::test(CreateApplication::class)
+    $creation = Livewire::test(CreateApplication::class)
         ->set('form.name', "{$role} application")
         ->set('form.allowedOrigins', "https://{$role}.example.test")
         ->set('form.samplingPercent', 35)
@@ -445,7 +445,7 @@ it('drives each package role through the Reel application and retention flow aft
 
     $application = Application::query()->sole();
     $first = Credential::query()->where('subject_ref', 'application:'.$application->public_id)->sole();
-    $firstCode = session('enrollment.code');
+    $firstCode = enrollmentCodeFromHtml($creation->html());
     expect($firstCode)->toBeString()->not->toBeEmpty();
 
     $initialEnrollment = $this->postJson('/bfc/asymmetric-enrollments/'.$application->public_id, [
@@ -464,7 +464,7 @@ it('drives each package role through the Reel application and retention flow aft
         ->assertHasNoErrors();
 
     $replacement = Credential::query()->where('id', '!=', $first->id)->sole();
-    $replacementCode = session('enrollment.code');
+    $replacementCode = enrollmentCodeFromHtml($settings->html());
     expect($application->fresh()->sampling_percent)->toBe(45)
         ->and($application->fresh()->ingest_enabled)->toBeTrue()
         ->and($replacementCode)->toBeString()->not->toBeEmpty();
