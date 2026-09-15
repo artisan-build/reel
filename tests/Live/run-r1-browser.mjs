@@ -54,7 +54,10 @@ const roleCases = [
     },
 ];
 
+const navigationDiagnosticMaxBytes = 1024;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+class NavigationDiagnosticError extends Error {}
 
 async function waitFor(fn, message, attempts = 100) {
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -94,6 +97,8 @@ const chromeExited = new Promise((resolve) => chrome.once('exit', resolve));
 let socket;
 let nextId = 0;
 const pending = new Map();
+let mainDocumentStatus = null;
+let mainDocumentFailed = false;
 
 function send(method, params = {}) {
     return new Promise((resolve, reject) => {
@@ -113,14 +118,73 @@ async function evaluate(expression) {
     return response.result.value;
 }
 
+function sanitizePath(path) {
+    const normalized = String(path ?? '')
+        .split(/[?#]/, 1)[0]
+        .replace(/[0-9A-HJKMNP-TV-Z]{26}|[a-f0-9]{64}/g, '{fixture}');
+    const allowed = [
+        '/',
+        '/bfc/login',
+        '/bfc/ui',
+        '/bfc/members',
+        '/dashboard',
+        '/applications',
+        '/sessions',
+        '/applications/{fixture}',
+        '/applications/{fixture}/sessions/{fixture}',
+    ];
+
+    return allowed.includes(normalized) ? normalized : '/{other}';
+}
+
+async function navigationDiagnostic(path, marker) {
+    let pageState = {};
+    try {
+        pageState = await evaluate(`({
+            currentPath: location.pathname,
+            readyState: document.readyState,
+            expectedMarkerPresent: Boolean(document.querySelector(${JSON.stringify(marker)})),
+            errorMarkerPresent: Boolean(document.querySelector('[data-testid="error-page"], [data-testid="server-error"]')),
+            loginMarkerPresent: Boolean(document.querySelector('[data-testid="login-form"]')),
+        })`);
+    } catch {}
+
+    const diagnostic = JSON.stringify({
+        expected_path: sanitizePath(path),
+        current_path: sanitizePath(pageState.currentPath),
+        document_ready_state: ['loading', 'interactive', 'complete'].includes(pageState.readyState)
+            ? pageState.readyState
+            : 'unavailable',
+        main_document_status: Number.isInteger(mainDocumentStatus) && mainDocumentStatus >= 100 && mainDocumentStatus <= 599
+            ? mainDocumentStatus
+            : null,
+        expected_marker_present: pageState.expectedMarkerPresent === true,
+        error_marker_present: pageState.errorMarkerPresent === true,
+        login_marker_present: pageState.loginMarkerPresent === true,
+        document_request_failed: mainDocumentFailed,
+        cdp_socket_open: socket?.readyState === WebSocket.OPEN,
+        chrome_running: chrome.exitCode === null && chrome.signalCode === null,
+    });
+
+    return Buffer.byteLength(diagnostic, 'utf8') <= navigationDiagnosticMaxBytes
+        ? diagnostic
+        : '{"diagnostic":"unavailable"}';
+}
+
 async function navigate(path, marker) {
+    mainDocumentStatus = null;
+    mainDocumentFailed = false;
     await send('Page.navigate', { url: baseUrl + path });
-    await waitFor(
-        () => evaluate(`document.readyState === 'complete'
-            && location.pathname === ${JSON.stringify(path)}
-            && Boolean(document.querySelector(${JSON.stringify(marker)}))`),
-        `Browser navigation failed for ${path.replace(/[0-9A-HJKMNP-TV-Z]{26}|[a-f0-9]{64}/g, '{fixture}')}.`,
-    );
+    try {
+        await waitFor(
+            () => evaluate(`document.readyState === 'complete'
+                && location.pathname === ${JSON.stringify(path)}
+                && Boolean(document.querySelector(${JSON.stringify(marker)}))`),
+            'Browser navigation timed out.',
+        );
+    } catch {
+        throw new NavigationDiagnosticError(`Browser navigation failed: ${await navigationDiagnostic(path, marker)}`);
+    }
 }
 
 async function screenshot(name) {
@@ -263,6 +327,14 @@ try {
     });
     socket.onmessage = (event) => {
         const message = JSON.parse(event.data);
+        if (message.method === 'Network.responseReceived'
+            && message.params?.type === 'Document'
+            && Number.isInteger(message.params.response?.status)) {
+            mainDocumentStatus = message.params.response.status;
+        }
+        if (message.method === 'Network.loadingFailed' && message.params?.type === 'Document') {
+            mainDocumentFailed = true;
+        }
         if (!message.id || !pending.has(message.id)) return;
         const waiter = pending.get(message.id);
         pending.delete(message.id);
@@ -344,6 +416,10 @@ try {
     }
 }
 
+if (failure instanceof NavigationDiagnosticError) {
+    process.stderr.write(`${failure.message}\n`);
+    process.exit(1);
+}
 if (failure) throw failure;
 if (!evidence.cleanup.clipboard_cleared || !evidence.cleanup.chrome_stopped || !evidence.cleanup.profile_removed) {
     throw new Error('Browser cleanup verdict was incomplete.');
