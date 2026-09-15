@@ -4,6 +4,7 @@ namespace App\Livewire\Applications;
 
 use App\Models\Application;
 use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -15,6 +16,11 @@ class Index extends Component
     public function mount(): void
     {
         abort_unless(resolve(IdentityContext::class)->canUseProduct(), 403);
+    }
+
+    public function render(): View
+    {
+        return view('livewire.applications.index');
     }
 
     /**

@@ -70,6 +70,17 @@ it('guards application management routes with package authentication', function 
     $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.login'));
 });
 
+it('renders test-created applications on the index for Members', function (): void {
+    $application = Application::factory()->create([
+        'name' => 'Member application '.fake()->uuid(),
+    ]);
+
+    $this->actingAs(User::factory()->create())
+        ->get(route('admin.applications.index'))
+        ->assertOk()
+        ->assertSeeText($application->name);
+});
+
 it('creates an application and displays its enrollment code exactly once', function (): void {
     $this->actingAs(User::factory()->admin()->create());
 
