@@ -14,6 +14,9 @@ require __DIR__.'/../../vendor/autoload.php';
 const R1_POSTGRES_IMAGE = 'postgres:17-alpine';
 const R1_REDIS_IMAGE = 'redis:7-alpine';
 const R1_MINIO_IMAGE = 'quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z';
+const R1_NODE_BINARY = '/opt/homebrew/bin/node';
+const R1_CHROME_BINARY = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const R1_BROWSER_RUNNER = 'tests/Live/run-r1-browser.mjs';
 const R1_DIAGNOSTIC_MAX_BYTES = 4096;
 const R1_DIAGNOSTIC_MAX_LINES = 40;
 const R1_FOCUSED_TESTS = [
@@ -246,6 +249,111 @@ function r1FocusedTests(string $app, array $environment): array
     return ['files' => R1_FOCUSED_TESTS, 'result' => 'pass'];
 }
 
+/**
+ * @param  array<string, string>  $environment
+ * @return array<string, mixed>
+ */
+function r1BrowserState(string $app, array $environment, string $password): array
+{
+    $source = <<<'PHP'
+require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+$password = getenv('REEL_R1_SEED_PASSWORD');
+if (! is_string($password) || $password === '') {
+    throw new RuntimeException('Browser fixture password was unavailable.');
+}
+
+$owner = ArtisanBuild\BuiltForCloud\User::query()->where('email', 'r1-browser-owner@example.test')->sole();
+$admin = ArtisanBuild\BuiltForCloud\User::query()->where('email', 'r1-browser-admin@example.test')->sole();
+if ($owner->role !== ArtisanBuild\BuiltForCloud\UserRole::Owner->value
+    || $admin->role !== ArtisanBuild\BuiltForCloud\UserRole::Admin->value) {
+    throw new RuntimeException('Browser fixture administrative roles were incorrect.');
+}
+$owner->forceFill(['email_verified_at' => now()])->save();
+$admin->forceFill(['email_verified_at' => now()])->save();
+
+$member = new ArtisanBuild\BuiltForCloud\User;
+$member->forceFill([
+    'name' => 'R1 Browser Member',
+    'email' => 'r1-browser-member@example.test',
+    'email_verified_at' => now(),
+    'password' => Illuminate\Support\Facades\Hash::make($password),
+    'role' => ArtisanBuild\BuiltForCloud\UserRole::Member->value,
+    'status' => 'active',
+])->save();
+
+$application = App\Models\Application::query()->create([
+    'name' => 'R1 Browser Application',
+    'allowed_origins' => ['https://browser.example.test'],
+    'severity' => App\Enums\CaptureSeverity::Inputs,
+    'mask_selectors' => [],
+    'block_selectors' => [],
+    'excluded_paths' => [],
+    'sampling_percent' => 100,
+    'ingest_enabled' => true,
+    'max_new_sessions_per_day' => 1000,
+    'max_concurrent_sessions' => 100,
+    'max_chunks_per_session' => 360,
+    'max_compressed_bytes_per_session' => 67108864,
+    'max_compressed_chunk_bytes' => 262144,
+    'max_daily_chunks' => 100000,
+    'max_daily_compressed_bytes' => 10737418240,
+    'max_ingest_requests_per_minute' => 600,
+]);
+
+$sessionId = bin2hex(random_bytes(32));
+$recording = new App\Models\RecordingSession;
+$recording->forceFill([
+    'application_id' => $application->getKey(),
+    'application_credential_id' => (string) Illuminate\Support\Str::uuid(),
+    'session_id' => $sessionId,
+    'grant_id_hash' => hash('sha256', $sessionId),
+    'origin' => 'https://browser.example.test',
+    'status' => App\Enums\RecordingSessionStatus::Ready,
+    'protocol_version' => ArtisanBuild\ReelClient\Envelope::VERSION,
+    'max_chunks' => 10,
+    'max_compressed_bytes' => 1000000,
+    'max_chunk_bytes' => 100000,
+    'started_at' => now()->subMinutes(2),
+    'max_event_time' => now()->subMinute(),
+    'upload_cutoff_at' => now()->addMinute(),
+    'ended_at' => now(),
+    'maximum_expires_at' => now()->addDays(30),
+    'expires_at' => now()->addDays(30),
+    'delete_not_before' => now()->addDays(30),
+    'status_changed_at' => now(),
+    'is_complete' => true,
+    'incomplete_reasons' => [],
+    'initial_path' => '/browser-proof',
+    'latest_path' => '/browser-proof',
+    'duration_seconds' => 120,
+])->save();
+
+fwrite(STDOUT, json_encode([
+    'application_path' => '/applications/'.$application->public_id,
+    'session_path' => '/applications/'.$application->public_id.'/sessions/'.$sessionId,
+], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+PHP;
+
+    return r1Json(r1Run(
+        [PHP_BINARY, '-r', $source],
+        $app,
+        [...$environment, 'REEL_R1_SEED_PASSWORD' => $password],
+        'isolated browser fixture seed',
+    ), 'Browser fixture seed');
+}
+
+function r1Clipboard(string $contents): void
+{
+    $process = new Process(['/usr/bin/pbcopy']);
+    $process->setInput($contents);
+    if ($process->run() !== 0) {
+        r1Fail('The disposable browser clipboard could not be updated.');
+    }
+}
+
 $root = dirname(__DIR__, 2);
 $expectedCases = [
     'isolated_r1_focused_tests',
@@ -254,12 +362,14 @@ $expectedCases = [
     'local_scalpels_stub',
     'loopback_public_and_auth_denial',
     'local_bfc_cli',
+    'standalone_chrome_browser',
     'queue_worker_and_object_round_trip',
     'scheduler_registration_and_tick',
 ];
 
 if (in_array('--self-check', $argv, true)) {
     $source = (string) file_get_contents(__FILE__);
+    $browserSource = (string) file_get_contents($root.'/'.R1_BROWSER_RUNNER);
     $requiredFocusedTests = [
         'tests/Feature/ApplicationEnrollmentTest.php',
         'tests/Feature/ApplicationManagementTest.php',
@@ -338,12 +448,46 @@ if (in_array('--self-check', $argv, true)) {
             r1Fail('The live runner self-check is missing '.$required.'.');
         }
     }
+    if (R1_NODE_BINARY !== '/opt/homebrew/bin/node'
+        || R1_CHROME_BINARY !== '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        || ! is_executable(R1_NODE_BINARY)
+        || ! is_executable(R1_CHROME_BINARY)
+        || ! is_file($root.'/'.R1_BROWSER_RUNNER)
+        || ! str_contains($browserSource, R1_CHROME_BINARY)) {
+        r1Fail('The live runner self-check requires the verified Node, Chrome, and browser runner paths.');
+    }
+    foreach ([
+        "role: 'owner'",
+        "role: 'admin'",
+        "role: 'member'",
+        '/usr/bin/pbpaste',
+        '/usr/bin/pbcopy',
+        'clearClipboard();',
+        'browser-owner.png',
+        'browser-admin.png',
+        'browser-member.png',
+        'browser-evidence.json',
+        'application-signing-credentials',
+        'retention-controls',
+        'secrets_recorded: false',
+        'verifier_blocked: []',
+        'rmSync(profile',
+    ] as $requiredBrowserSource) {
+        if (! str_contains($browserSource, $requiredBrowserSource)) {
+            r1Fail('The live runner self-check is missing the required browser lane structure.');
+        }
+    }
+    foreach (['docker run', 'P6LoopbackProcess::start', 'r1FocusedTests'] as $forbiddenBrowserSource) {
+        if (str_contains($browserSource, $forbiddenBrowserSource)) {
+            r1Fail('The browser runner must not start the full live stack.');
+        }
+    }
 
     fwrite(STDOUT, json_encode([
         'schema' => 'reel.r1.live.v1',
         'mode' => 'self-check',
         'cases' => $expectedCases,
-        'browser' => 'coordinator-owned',
+        'browser' => 'standalone-chrome-self-check',
         'full_stack_started' => false,
     ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n");
     exit(0);
@@ -369,6 +513,8 @@ $databaseName = '';
 $cases = [];
 $commands = [];
 $runtime = [];
+$browserEvidence = [];
+$browserArtifacts = [];
 $teardown = [
     'listeners_absent' => false,
     'database_absent' => false,
@@ -538,12 +684,64 @@ PHP);
     $cases['loopback_public_and_auth_denial'] = 'pass';
 
     $commands['create_admin_local'] = 0;
+    $browserPassword = bin2hex(random_bytes(24)).'Aa1!';
     r1Run([
         PHP_BINARY, 'artisan', 'create-admin', '--execute', '--local',
-        '--email=r1-live-owner@example.test', '--password=r1-live-disposable-password',
-        '--name=R1 Live Owner', '--no-interaction',
+        '--email=r1-browser-owner@example.test', '--password='.$browserPassword,
+        '--name=R1 Browser Owner', '--no-interaction',
     ], $app, $environment, 'local BfC owner creation');
+    r1Run([
+        PHP_BINARY, 'artisan', 'create-admin', '--execute', '--local', '--force',
+        '--email=r1-browser-admin@example.test', '--password='.$browserPassword,
+        '--name=R1 Browser Admin', '--no-interaction',
+    ], $app, $environment, 'local BfC admin creation');
     $cases['local_bfc_cli'] = 'pass';
+
+    $browserState = r1BrowserState($app, $environment, $browserPassword);
+    $browserArtifactDirectory = $runDirectory.'/browser-artifacts';
+    mkdir($browserArtifactDirectory, 0700);
+    r1Clipboard($browserPassword);
+    try {
+        r1Run([
+            R1_NODE_BINARY,
+            $app.'/'.R1_BROWSER_RUNNER,
+        ], $app, [...$environment,
+            'REEL_R1_BROWSER_BASE_URL' => 'http://127.0.0.1:'.$appListener->port,
+            'REEL_R1_BROWSER_ARTIFACT_DIR' => $browserArtifactDirectory,
+            'REEL_R1_BROWSER_CANDIDATE_SHA' => $candidateSha,
+            'REEL_R1_BROWSER_APPLICATION_PATH' => (string) ($browserState['application_path'] ?? ''),
+            'REEL_R1_BROWSER_SESSION_PATH' => (string) ($browserState['session_path'] ?? ''),
+        ], 'standalone Chrome browser lane', 300);
+    } finally {
+        $browserPassword = '';
+        r1Clipboard('');
+    }
+    $browserEvidence = r1Json(
+        (string) file_get_contents($browserArtifactDirectory.'/browser-evidence.json'),
+        'Browser evidence',
+    );
+    $browserCases = $browserEvidence['cases'] ?? null;
+    $expectedScreenshots = ['browser-owner.png', 'browser-admin.png', 'browser-member.png'];
+    if (($browserEvidence['candidate_sha'] ?? null) !== $candidateSha
+        || ($browserEvidence['secrets_recorded'] ?? null) !== false
+        || ($browserEvidence['verifier_blocked'] ?? null) !== []
+        || ! is_array($browserCases)
+        || array_keys($browserCases) !== ['owner', 'admin', 'member']
+        || ($browserEvidence['cleanup'] ?? null) !== [
+            'clipboard_cleared' => true,
+            'chrome_stopped' => true,
+            'profile_removed' => true,
+        ]) {
+        r1Fail('The standalone Chrome browser evidence was incomplete.');
+    }
+    foreach (['browser-evidence.json', ...$expectedScreenshots] as $browserArtifact) {
+        $contents = file_get_contents($browserArtifactDirectory.'/'.$browserArtifact);
+        if (! is_string($contents) || $contents === '') {
+            r1Fail('A required browser artifact was absent.');
+        }
+        $browserArtifacts[$browserArtifact] = $contents;
+    }
+    $cases['standalone_chrome_browser'] = 'pass';
 
     $commands['reel_smoke'] = 0;
     r1Run([PHP_BINARY, 'artisan', 'reel:smoke', '--no-interaction'], $app, $environment, 'real queue/object/runtime smoke');
@@ -564,6 +762,7 @@ PHP);
     $failure = $exception;
 } finally {
     try {
+        r1Clipboard('');
         if ($appListener instanceof P6LoopbackProcess) {
             $appListener->stop();
         }
@@ -603,6 +802,14 @@ if ($cases !== array_fill_keys($expectedCases, 'pass')
 }
 
 $package = r1LockedPackage($root.'/composer.lock', 'artisan-build/built-for-cloud');
+$browserOutputDirectory = dirname($stampPath).'/browser';
+if (file_exists($browserOutputDirectory) || ! mkdir($browserOutputDirectory, 0700)) {
+    fwrite(STDERR, "Reel R1 browser artifact directory could not be created.\n");
+    exit(1);
+}
+foreach ($browserArtifacts as $name => $contents) {
+    file_put_contents($browserOutputDirectory.'/'.$name, $contents);
+}
 $stamp = [
     'schema' => 'reel.r1.live.v1',
     'candidate_sha' => $candidateSha,
@@ -615,9 +822,14 @@ $stamp = [
     'commands' => $commands,
     'cases' => $cases,
     'browser' => [
-        'owner' => 'coordinator-owned',
-        'stable_paths' => ['/bfc/login', '/dashboard', '/applications/create', '/sessions'],
-        'markers' => ['login-form', 'application-public-id', 'application-signing-credentials', 'session-list', 'retention-controls'],
+        'verdict' => 'pass',
+        'runner' => R1_BROWSER_RUNNER,
+        'artifact_directory' => 'browser',
+        'browser' => $browserEvidence['browser'] ?? null,
+        'roles' => array_keys($browserCases),
+        'verifier_blocked' => $browserEvidence['verifier_blocked'] ?? null,
+        'cleanup' => $browserEvidence['cleanup'] ?? null,
+        'secrets_recorded' => $browserEvidence['secrets_recorded'] ?? null,
     ],
     'teardown' => $teardown,
 ];
@@ -626,6 +838,6 @@ fwrite(STDOUT, json_encode([
     'candidate_sha' => $candidateSha,
     'cases' => count($cases),
     'teardown' => 'pass',
-    'browser' => 'coordinator-owned',
+    'browser' => 'pass',
     'stamp' => $stampPath,
 ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n");
