@@ -44,24 +44,32 @@ setup, done by hand.
 
 ### What you need
 
-- **PHP 8.3 or newer**, with the `pdo_pgsql` extension. CI runs the suite on 8.4 and 8.5.
+- **PHP 8.4.1 or newer, 64-bit**, with the `pdo_pgsql` and `gmp` extensions. CI runs the suite on 8.4 and
+  8.5.
 - **Composer.**
 - **Git.**
 - **A PostgreSQL server** you can create databases on, **and the `psql` client**. Several migrations use
   PostgreSQL-specific SQL, so MySQL and SQLite are not supported.
 - **A Laravel Cloud account** and its `cloud` CLI, when you reach the deploy step.
 
-Check the three that are easy to be missing:
+> `composer.json` says `"php": "^8.3"`, but the committed `composer.lock` resolves to Symfony 8.1, which
+> requires **PHP 8.4.1 or newer**. On 8.3 — or even on 8.4.0 — `composer install` fails to resolve.
+> `composer prohibits php 8.4.1 --locked` in this repository reports no conflict; 8.3 and 8.4.0 each report
+> 18 conflicting packages. Believe the lock, not the constraint.
+
+Check the four things that are easy to be missing:
 
 ```bash
-php -v                                   # 8.3 or newer
-php -m | grep pdo_pgsql                  # must print: pdo_pgsql
+php -v                                       # 8.4.1 or newer
+php -r 'echo PHP_INT_SIZE * 8, "-bit\n";'    # must print: 64-bit
+php -m | grep -E '^(pdo_pgsql|gmp)$'         # must print both
 git --version && psql --version && composer --version
 ```
 
-If `php -m | grep pdo_pgsql` prints nothing, migrations will fail with "could not find driver". Install your
-platform's PHP PostgreSQL extension before going further. A running PostgreSQL server does not put either the
-extension or the `psql` client on your machine.
+If `pdo_pgsql` is missing, migrations fail with "could not find driver". If `gmp` is missing, `composer
+install` refuses the lock file. A running PostgreSQL server puts neither the PHP extension nor the `psql`
+client on your machine. You can see the full list the lock file needs with
+`composer check-platform-reqs --lock --no-dev`.
 
 You do *not* need Node, npm, or Vite. Reel has no frontend build step — the compiled CSS is committed under
 `public/build/assets/`.
@@ -226,7 +234,30 @@ cloud repo:config
 `ship` does not write `.cloud/config.json` itself, and without that file every later `cloud` command has no
 idea which application you mean.
 
-**4. Create the private object storage bucket.** `bucket:create` requires all six of these flags and will
+**4. Find the hostname this environment will answer on.** Two later commands need it, so settle it now.
+
+Every Laravel Cloud environment gets a URL of its own, shown in the dashboard and in
+`cloud environment:get <environment> -n --json`. That is enough to finish this guide. If you want Reel on
+your own domain instead, create and verify it now:
+
+```bash
+cloud domain:create <environment> --name reel.example.com --wildcard-enabled=false -n --json
+```
+
+Read the `dnsRecords` array in that response — it is Cloud's own statement of which DNS records it wants for
+this hostname — create those records at your DNS provider, then:
+
+```bash
+cloud domain:verify reel.example.com --env <environment> -n --json
+```
+
+The hostname is positional here, not a `--name` flag. The certificate stays pending until the application is
+deployed and answering, so do not wait for it before continuing.
+
+Use the hostname you settled on — Cloud's own URL or your verified domain — everywhere `<your-reel-hostname>`
+appears below.
+
+**5. Create the private object storage bucket.** `bucket:create` requires all six of these flags and will
 error on one missing flag at a time until they are all present:
 
 ```bash
@@ -247,7 +278,7 @@ readable from a public bucket URL. Scope `--allowed-origins` to the real hostnam
 flag on `environment:update`, so this step cannot be scripted. **Checkpoint:** the environment's Storage panel
 lists the bucket before you go on.
 
-**5. Create the managed queue and make it the default:**
+**6. Create the managed queue and make it the default:**
 
 ```bash
 cloud managed-queue:create <environment> --name reel --size <size> -n --json
@@ -261,7 +292,7 @@ all run on it.
 `environment:get --fields=databaseSchemaId` reads back `null` even when it is attached. Confirm in the
 dashboard (Environment → Database), not from the CLI.
 
-**6. Copy the manifest's build and deploy commands into Laravel Cloud.** Open Environment → Settings and set
+**7. Copy the manifest's build and deploy commands into Laravel Cloud.** Open Environment → Settings and set
 them to exactly what [`built-for-cloud.json`](built-for-cloud.json) declares:
 
 - Build commands:
@@ -281,7 +312,7 @@ them to exactly what [`built-for-cloud.json`](built-for-cloud.json) declares:
 If you leave the deploy commands empty, your schema is never created and nothing tells you the deployment is
 broken.
 
-**7. Set the application variables** — and only these:
+**8. Set the application variables** — and only these:
 
 ```bash
 cloud environment:variables --json -n --action=set --key=APP_ENV   --value=production
@@ -292,14 +323,14 @@ cloud environment:variables --json -n --action=set --key=APP_URL   --value=https
 
 Let Cloud generate and keep `APP_KEY`. Set nothing else — re-read the box above.
 
-**8. Deploy and watch it:**
+**9. Deploy and watch it:**
 
 ```bash
 cloud deploy -n
 cloud deploy:monitor -n
 ```
 
-**9. Read the `reel:smoke` output in the deploy log.** It runs last, after `migrate --force`. It refuses to
+**10. Read the `reel:smoke` output in the deploy log.** It runs last, after `migrate --force`. It refuses to
 report ready unless the resolved disk is S3-backed and the queue is not inline, so a failure here means a
 resource is missing or an environment variable is shadowing one — not a cosmetic warning. Fix it before you
 enroll anything.
@@ -309,7 +340,7 @@ compares the schedule this application registers in code against `built-for-clou
 the dashboard that the environment's scheduler is enabled, and that its runs are appearing, or Reel's
 finalization and retention work silently never happens and recordings never become playable.
 
-**10. Create the first Owner in the deployed environment:**
+**11. Create the first Owner in the deployed environment:**
 
 ```bash
 php artisan create-admin --environment=<environment>
@@ -317,6 +348,17 @@ php artisan create-admin --environment=<environment>
 
 Your machine collects the password and hashes it locally; only the hash travels to Cloud. Do not print, paste
 or store either the password or the hash.
+
+**12. Open it and sign in.** A green deploy log is not proof that the application answers.
+
+```bash
+curl -sI https://<your-reel-hostname>/ | head -1        # expect: HTTP/2 200
+```
+
+Then open `https://<your-reel-hostname>/bfc/login` in a browser and sign in as the Owner you just created.
+You should land on the Built for Cloud home page, with Reel's **Applications** and **Sessions** screens
+reachable. If the certificate is not ready yet, Cloud's domain status can lag behind reality — trust the live
+HTTP response over the reported status.
 
 Attaching the database and attaching the bucket are the two steps the Laravel Cloud CLI cannot do today; do
 them in the dashboard and confirm there rather than trusting a CLI read.
@@ -326,93 +368,175 @@ Full deployment, recovery, upgrade, rotation, backup, and uninstall procedures a
 
 ### 9. Connect a Laravel application
 
+The order below matters. The enrollment code you get from Reel lives for **15 minutes**, so everything slow —
+installing the package, resolving dependencies, marking routes — happens *before* you mint it.
+
+**Your monitored application must run Laravel 13.** The client requires `illuminate/console`,
+`illuminate/contracts`, `illuminate/http`, `illuminate/routing`, `illuminate/session`, `illuminate/support`
+and `illuminate/view` at `^13.0`. On Laravel 12 or older, Composer will refuse to resolve it.
+
+#### 1. Install the Reel client
+
+`artisan-build/reel-client` is **not on Packagist yet**, and Composer cannot fetch it from this repository
+over Git either: it lives in a subdirectory, and the repository's root package is `artisan-build/reel`.
+Composer installs a package from a repository root, never from a folder inside another package.
+
+Until the client is split out and published, **copy it into your own application's source tree and commit
+it.** A path repository pointing at a clone somewhere on your laptop will not work: Composer records that
+path in `composer.lock`, and on your build server the path does not exist, so `composer install` fails with
+`Source path "..." is not found for package artisan-build/reel-client`. A path *inside* the application is
+recorded relative to the application and is present in every checkout.
+
+```bash
+# in the application you want to record
+git clone --depth 1 https://github.com/artisan-build/reel.git /tmp/reel
+mkdir -p vendor-src
+cp -R /tmp/reel/packages/reel-client vendor-src/reel-client
+rm -rf /tmp/reel vendor-src/reel-client/vendor vendor-src/reel-client/composer.lock
+
+composer config repositories.reel-client \
+  '{"type":"path","url":"vendor-src/reel-client","options":{"symlink":false}}'
+composer require artisan-build/reel-client
+```
+
+Two details carry the weight:
+
+- **The `url` is relative** (`vendor-src/reel-client`, not `/Users/you/...`). Check it landed that way:
+  `grep -A2 '"artisan-build/reel-client"' composer.lock` should show `"url": "vendor-src/reel-client"`.
+- **`"symlink": false`** makes Composer copy the package into `vendor/` instead of symlinking it, so the
+  installed tree does not depend on anything outside `vendor-src/`.
+
+Commit `vendor-src/reel-client`, `composer.json` and `composer.lock` together — `vendor-src/` is ordinary
+application source now, and your deployment needs it. Make sure it is not covered by a `.gitignore` rule.
+
+To take a newer client later, replace the contents of `vendor-src/reel-client` from a fresh clone and run
+`composer update artisan-build/reel-client`.
+
+**Prove it before you go on.** This is exactly what your build server will do:
+
+```bash
+rm -rf vendor && composer install
+```
+
+If that succeeds with no `vendor/` present, your deployment will succeed too.
+
+#### 2. Hide sensitive routes
+
+Do this before anything records. The exclusion is absolute for that response:
+
+```php
+Route::get('/billing/payment-method', PaymentMethodController::class)->hiddenFromReel();
+
+Route::hiddenFromReel()->group(function (): void {
+    require __DIR__.'/auth.php';
+});
+```
+
+Review authentication, password recovery, card entry, health data, and privileged admin routes. Sensitive
+content inside an otherwise recordable page still needs `data-reel-mask`, `data-reel-block`, or configured
+selectors.
+
+#### 3. Add the recorder to your layout
+
+It loads the assets and nothing else — it does not start recording:
+
+```blade
+<x-reel::recorder />
+```
+
+#### 4. Create the application in Reel, and enroll straight away
+
+Now that the slow work is done, mint the code and use it within the 15 minutes.
+
 1. Sign in to your Reel deployment and open **Applications → Create application**. Give it a name, one
    allowed origin per line (`https://app.example.com` — no paths or query strings), and a sampling percent.
 2. Copy the **enrollment code** shown on the next screen. An enrollment code is a one-time secret that proves
-   to Reel that the application registering a signing key really is the one you just created. It expires in
-   15 minutes, Reel stores only a hash of it, and it is never shown again.
-3. **Install the Reel client into the application you want to record.**
-
-   `artisan-build/reel-client` is **not on Packagist yet**, and it cannot be installed from a Git URL either:
-   it lives inside this repository, whose root package is `artisan-build/reel`, and Composer cannot install a
-   package from a subdirectory of another one. Until it is split out and published, install it from a local
-   clone of this repository.
-
-   ```bash
-   # once, anywhere you like — this clone is only a source of files
-   git clone https://github.com/artisan-build/reel.git ~/src/reel
-
-   # then, in the application you want to record
-   composer config repositories.reel-client \
-     '{"type":"path","url":"/absolute/path/to/src/reel/packages/reel-client","options":{"symlink":false}}'
-   composer require artisan-build/reel-client
-   ```
-
-   `"symlink": false` matters. A Composer path repository symlinks by default, and a symlink into a directory
-   on your laptop will not exist on the server you deploy to. With `"symlink": false` Composer **copies** the
-   package into `vendor/`, so your `composer.lock` and your deployment both work — but you must re-run
-   `composer update artisan-build/reel-client` from an updated clone to pick up a new version. Use an absolute
-   path; a relative one is resolved against the application directory.
-
-   Then enroll:
+   to Reel that the application registering a signing key really is the one you just created. Reel stores
+   only a hash of it, it is never shown again, and it expires 15 minutes after it is issued.
+3. Immediately, in your monitored application:
 
    ```bash
    php artisan reel:install
    ```
 
    It asks for the Reel URL, the application id, the enrollment code, and a Reel Context export mode — answer
-   `off` for that last one unless you want the Nightwatch link described below. You can pass them instead:
+   `off` for that last one unless you want the Nightwatch link described in the introduction. You can pass
+   them instead:
 
    ```bash
    php artisan reel:install --url=https://reel.example.com \
      --application=<application id> --enrollment-code=<code> --context-export=off
    ```
 
-   On success it prints `Reel enrolled. The signing key remains local to this application.` The installer
-   generates an RSA key pair inside your application, sends only the **public** key to Reel's enrollment
-   endpoint (`POST /bfc/asymmetric-enrollments/{application}`), and writes `REEL_URL`,
-   `REEL_APPLICATION_ID`, `REEL_PRIVATE_KEY`, and `REEL_CONTEXT_EXPORT` to that application's `.env`. The
-   private key never leaves your application; Reel keeps only the public key and uses it to check that each
-   upload was signed by you.
+On success it prints `Reel enrolled. The signing key remains local to this application.` The installer
+generates an RSA key pair inside your application, sends only the **public** key to Reel's enrollment
+endpoint (`POST /bfc/asymmetric-enrollments/{application}`), and writes `REEL_URL`, `REEL_APPLICATION_ID`,
+`REEL_PRIVATE_KEY` and `REEL_CONTEXT_EXPORT` to that application's local `.env`. The private key never
+leaves your application; Reel keeps only the public key and uses it to check that each upload was signed by
+you.
 
-4. **Hide sensitive routes before you record anything.** The exclusion is absolute for that response:
+If the code has expired, `reel:install` fails with the unhelpful message `Reel rejected the enrollment
+request.` To get a new one, open the application in Reel and look at **Signing credentials**. The credential
+you just created is still marked **Pending enrollment**, and a first credential like that cannot be reissued
+— it has no predecessor to reissue from. Press **Revoke** on it, then **Issue credential**, and use the new
+code immediately. (**Rotate** is the control for replacing a key on an application that already enrolled
+successfully; it is not offered on a pending one.)
 
-   ```php
-   Route::get('/billing/payment-method', PaymentMethodController::class)->hiddenFromReel();
+The client switches itself on as soon as `REEL_URL` and `REEL_PRIVATE_KEY` are both readable. Confirm:
 
-   Route::hiddenFromReel()->group(function (): void {
-       require __DIR__.'/auth.php';
-   });
-   ```
+```bash
+php artisan route:list | grep reel
+```
 
-   Review authentication, password recovery, card entry, health data, and privileged admin routes. Sensitive
-   content inside an otherwise recordable page still needs `data-reel-mask`, `data-reel-block`, or configured
-   selectors.
+You should see `reel/session-grants` and the two `reel/assets/...` routes. If you see nothing, the two
+settings are not reaching config — that is the same failure you will hit on a server, so fix it here.
 
-5. **Add the recorder to your layout.** It loads the assets and nothing else — it does not start recording:
+#### 5. Start recording after your own consent decision
 
-   ```blade
-   <x-reel::recorder />
-   ```
+`Reel.start()` returns a promise resolving to a status object, so put it in an async function and check what
+you got back:
 
-   The client registers its own routes as soon as `REEL_URL` and `REEL_PRIVATE_KEY` are both set. Confirm
-   with `php artisan route:list | grep reel` — you should see `reel/session-grants` and the two
-   `reel/assets/...` routes.
+```js
+document.querySelector('#accept-cookies').addEventListener('click', async () => {
+    const status = await Reel.start({ consent: true, refuseOnGpc: true });
+    console.log(status.state);   // "recording" when it is actually recording
+});
+```
 
-6. **Start recording only after your own consent decision.** `Reel.start()` returns a promise resolving to a
-   status object, so put it in an async function and check what you got back:
+`state` is `recording` on success. The other values tell you why it did not start: `awaiting_consent` (you
+did not pass `consent: true`), `refused_gpc` (the browser sends Global Privacy Control and you passed
+`refuseOnGpc: true`), `hidden` (the page is on a route marked `hiddenFromReel()`), or `stopped`. You can read
+it again at any time with `Reel.status()`, and stop with `Reel.stop()`.
 
-   ```js
-   document.querySelector('#accept-cookies').addEventListener('click', async () => {
-       const status = await Reel.start({ consent: true, refuseOnGpc: true });
-       console.log(status.state);   // "recording" when it is actually recording
-   });
-   ```
+#### 6. Carry the enrollment to your deployed application
 
-   `state` is `recording` on success. The other values tell you why it did not start: `awaiting_consent` (you
-   did not pass `consent: true`), `refused_gpc` (the browser sends Global Privacy Control and you passed
-   `refuseOnGpc: true`), `hidden` (the page is on a route marked `hiddenFromReel()`), or `stopped`. You can
-   read it again at any time with `Reel.status()`, and stop with `Reel.stop()`.
+`reel:install` writes to the local `.env` file only, and `.env` is not deployed with your repository. Until
+you set the same four values in your hosting environment, the deployed application has no Reel URL and no
+signing key, the client stays switched off, its three routes do not exist, and `<x-reel::recorder />`
+renders a recorder that can never obtain a grant.
+
+Set all four wherever that application keeps its environment configuration — for Laravel Cloud, Environment →
+Variables, or `cloud environment:variables --json -n --action=set --key=... --value=...`:
+
+| Setting | Value |
+| --- | --- |
+| `REEL_URL` | your Reel deployment's URL |
+| `REEL_APPLICATION_ID` | the application id from Reel |
+| `REEL_PRIVATE_KEY` | the generated key, **as a secret** |
+| `REEL_CONTEXT_EXPORT` | `off`, `session_id`, or `session_id_and_url` |
+
+`REEL_PRIVATE_KEY` is a credential. Put it in the secret store, never in a committed file, and do not paste
+it into a chat, a ticket, or a terminal that logs. If you ever need a different key, do not try to move this
+one — use **Rotate credential** in Reel and run `reel:install` again in the target environment.
+
+After the monitored application deploys, check the client actually came up there:
+
+```bash
+curl -sI https://<your-app-hostname>/reel/assets/reel-recorder-0.1.0.js | head -1
+```
+
+A `200` means the client is registered and serving. A `404` means `REEL_URL` or `REEL_PRIVATE_KEY` is not
+reaching config in that environment, and nothing will ever be recorded.
 
 #### What to expect the first time
 
@@ -483,49 +607,85 @@ never become playable and nothing ever expires. These are the exact command stri
 [`routes/console.php`](routes/console.php) and [`built-for-cloud.json`](built-for-cloud.json) — note that two
 of them carry `--apply`, so in production they mutate on every run rather than reporting:
 
-| Scheduled command | Runs | What it does | Deletes data? |
-| --- | --- | --- | --- |
-| `reel:finalize-sessions` | every minute | Closes sessions with no recent chunk and queues compaction. | no |
-| `reel:retain-sessions` | hourly | **Deletes** unprotected sessions past their retention deadline. | **yes** |
-| `reel:retry-deletions --apply` | hourly | Retries object deletions and tombstones that did not complete. | **yes** |
-| `reel:resume-erasures --apply` | every 5 minutes | Dispatches the remaining batches of a user-erasure request. | **yes** |
-| `reel:sweep-orphans` | daily | **Deletes** stored objects that have no live database row. | **yes** |
+| Scheduled command | Runs | What it does |
+| --- | --- | --- |
+| `reel:finalize-sessions` | every minute | Closes sessions with no recent chunk, then queues compaction. Compaction writes one verified replay object and **deletes the raw chunk objects it replaced**. |
+| `reel:retain-sessions` | hourly | **Deletes** unprotected sessions past their retention deadline. |
+| `reel:retry-deletions --apply` | hourly | Retries object deletions and tombstones that did not complete. |
+| `reel:resume-erasures --apply` | every 5 minutes | Dispatches the remaining batches of a user-erasure request. |
+| `reel:sweep-orphans` | daily | **Deletes** stored objects that have no live database row. |
+
+**All five change data.** `reel:finalize-sessions` looks like the harmless one because it only moves a
+session's status — but the compaction job it queues deletes every temporary chunk object once the compacted
+replacement is written and verified. There is no read-only command in this table.
 
 Without `--apply`, `reel:retry-deletions` and `reel:resume-erasures` only report what they would do. The
 scheduler does not run them that way.
 
 `reel:reconcile-storage` is a manual diagnostic, and is a dry run unless you pass an explicit mutation flag.
 
-> **Running these locally is a good way to understand them, but four of the five delete things.** Point your
-> `.env` at a throwaway database and a throwaway `FILESYSTEM_DISK` before experimenting, never at a database
-> or bucket whose recordings you want to keep.
+> **Running these locally is a good way to understand them, but all of them mutate and most of them delete.**
+> Point your `.env` at a throwaway database and a throwaway `FILESYSTEM_DISK` before experimenting, never at a
+> database or bucket whose recordings you want to keep.
 
 ## Troubleshooting
 
 **`reel:smoke` fails locally with "The configured filesystem driver [local] is not S3-backed".**
 That is correct behaviour. `reel:smoke` is a *deployment* check and only passes against real S3-backed object
-storage and a real queue. Do not expect it to go green on your laptop. Note also what a green `reel:smoke`
-does and does not prove: it checks the database, the object storage disk and the queue for real, but its
-scheduler check only compares the schedule the application registers in code against `built-for-cloud.json`.
-It never asks Laravel Cloud whether the scheduler is enabled or firing — confirm that in the dashboard.
+storage and a real queue. Do not expect it to go green on your laptop.
+
+What the check actually requires is that **the private object-storage bucket you attached is the application's
+default file storage**, and that **jobs are handed to the attached managed queue rather than being run
+immediately inside the process that dispatched them**. Locally neither is true: files go to `storage/app` and
+jobs run inline, so the check fails on the first one and says so.
+
+Note also what a *green* `reel:smoke` does not prove. It checks the database, the storage bucket and the queue
+for real, but its scheduler check only compares the schedule this application registers in code against
+`built-for-cloud.json`. It never asks Laravel Cloud whether the scheduler is switched on or firing — confirm
+that in the dashboard.
 
 **`create-admin` asks me where to create the user, and offers Laravel Cloud environments.**
 Add `--local`. See step 5.
+
+**`composer ready` fails in PHPStan with dozens of `PHPDoc tag @mixin contains unknown class
+App\Models\IdeHelper...` errors.**
+Your development database is missing or unmigrated. The first thing `composer ready` runs is the IDE helper
+generator, which reads your real schema to write `_ide_helper_models.php`; with no database it writes a
+stripped file, and PHPStan then scans that file and fails. Check `DB_DATABASE` in `.env` points at a database
+that exists, run `php artisan migrate`, restore the file with
+`git checkout -- _ide_helper_models.php`, and run `composer ready` again.
 
 **`composer test` cannot connect to the database.**
 The suite ignores `.env` and uses the values pinned in `phpunit.xml` — database `reel_app_test`, role `root`,
 empty password, `127.0.0.1:5432`. Create that database and role, or edit `phpunit.xml`.
 
 **`composer require artisan-build/reel-client` fails with "Could not find a matching version of package".**
-The client is not on Packagist yet, and Composer cannot pull it out of this repository over Git either. Add
-it as a path repository from a local clone first — see step 3 of
-[Connect a Laravel application](#9-connect-a-laravel-application). If you already did that and still get the
-error, check that the `url` you configured is an absolute path ending in `/packages/reel-client` and that the
-directory contains a `composer.json`.
+The client is not on Packagist yet, and Composer cannot pull it out of this repository over Git either. Copy
+it into your application's own source tree and add it as a relative path repository — see
+[Connect a Laravel application](#9-connect-a-laravel-application), step 1. If you already did that and still
+get the error, check that `vendor-src/reel-client/composer.json` exists and that the `url` in
+`composer.json` matches that directory.
 
-**The client works locally but `vendor/artisan-build/reel-client` is missing after a deploy.**
-Your path repository is symlinking. Re-add it with `"options": {"symlink": false}` so Composer copies the
-package into `vendor/`, then `composer update artisan-build/reel-client` and commit the lock file.
+**A deploy fails with `Source path "/Users/..." is not found for package artisan-build/reel-client`.**
+Your path repository points at a directory on your own machine, and Composer wrote that absolute path into
+`composer.lock`. It does not exist on the build server. Copy the package into the application at
+`vendor-src/reel-client`, re-run `composer config repositories.reel-client` with the **relative** url,
+`composer update artisan-build/reel-client`, and commit `vendor-src/` with the lock file. Verify with
+`rm -rf vendor && composer install`.
+
+**The recorder component renders but nothing is ever recorded in a deployed application.**
+Check `curl -sI https://<your-app-hostname>/reel/assets/reel-recorder-0.1.0.js`. A `404` means the client is
+switched off there because `REEL_URL` and `REEL_PRIVATE_KEY` are not set in that environment — `reel:install`
+only wrote them to your local `.env`. See [Connect a Laravel application](#9-connect-a-laravel-application),
+step 6.
+
+**`reel:install` fails with `Reel rejected the enrollment request.`**
+Most often the enrollment code expired — it lives 15 minutes. In Reel, under the application's **Signing
+credentials**: if the credential still reads **Pending enrollment**, press **Revoke** and then **Issue
+credential** (a first pending credential cannot be reissued). If the application had already enrolled
+successfully and you are replacing its key, press **Rotate** instead. Either way, run `reel:install` with the
+new code straight away. The same error message also covers a mistyped application id and an unreachable
+`--url`, so check those if a fresh code does not help.
 
 **Sessions never appear in Reel.**
 Check, in order: the recording application's origin exactly matches one of the application's allowed origins
