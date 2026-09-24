@@ -57,6 +57,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libjavascriptcoregtk-4.1-bin || sudo apt-get install -y libjavascriptcoregtk-4.0-bin
 
+      - name: Run Rector
+        run: composer rector:check
+
       - name: Run PHPStan
         run: composer stan
 
