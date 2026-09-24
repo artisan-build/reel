@@ -43,7 +43,7 @@ function useManagedQueue(string $provisioned = 'reel-queue-927aa415'): void
 }
 
 /** @return array<string, mixed> */
-function resolvedCloudConfigWithoutEnvironment(): array
+function resolvedCloudConfig(?string $sessionDriver = null): array
 {
     $script = <<<'PHP'
 require 'vendor/autoload.php';
@@ -68,7 +68,7 @@ PHP;
         'QUEUE_CONNECTION' => false,
         'FILESYSTEM_DISK' => false,
         'CACHE_STORE' => false,
-        'SESSION_DRIVER' => false,
+        'SESSION_DRIVER' => $sessionDriver ?? false,
     ]);
     $process->mustRun();
 
@@ -129,17 +129,19 @@ it('never deploys configuration that shadows Cloud managed resource values', fun
         'queue.default',
         'filesystems.default',
         'cache.default',
-        'session.driver',
     ];
-    $resolved = resolvedCloudConfigWithoutEnvironment();
+    $resolved = resolvedCloudConfig();
+    $resolvedWithInjectedSession = resolvedCloudConfig('redis');
 
-    expect($resolved)->toHaveKeys($managedConfig);
+    expect($resolved)->toHaveKeys([...$managedConfig, 'session.driver'])
+        ->and($resolved['session.driver'])->toBe('cookie')
+        ->and($resolvedWithInjectedSession['session.driver'])->toBe('redis');
 
     foreach ($managedConfig as $key) {
         expect($resolved[$key])->toBeNull("Cloud-managed config key {$key} resolves to an application-set value");
     }
 
-    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|SESSION_DRIVER|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_[A-Z0-9_]+)';
+    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_[A-Z0-9_]+)';
 
     foreach (glob(base_path('config/*.php')) ?: [] as $path) {
         $contents = file_get_contents($path);
