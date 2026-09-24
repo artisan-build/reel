@@ -8,7 +8,6 @@ use App\Models\Application;
 use App\Models\RecordingSession;
 use App\Models\UserErasureAudit;
 use ArtisanBuild\BuiltForCloud\AuthorityMode;
-use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureConsoleSession;
 use ArtisanBuild\BuiltForCloud\Http\Middleware\EnsureUserIsAuthenticated;
 use ArtisanBuild\BuiltForCloud\InstallationAuthority;
 use ArtisanBuild\BuiltForCloud\ManagedAuthClient;
@@ -251,7 +250,9 @@ it('enforces the exact managed refresh and grace boundaries through Reel dashboa
         ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
 
     CarbonImmutable::setTestNow('2026-09-15T12:35:00+00:00');
-    $this->get(route('dashboard'))->assertRedirect(route('bfc.login'));
+    $this->get(route('dashboard'))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('dashboard', absolute: false),
+    ]));
     expect(reelManagedConfirmationCalls($fixture))->toBe(2)
         ->and(auth('web')->check())->toBeFalse()
         ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBeNull();
@@ -478,19 +479,31 @@ it('ends a removed managed session before Reel state can mutate', function (): v
 
     $fixture->confirmationOverrides = ['membership_status' => 'removed'];
     CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
-    $this->get(route('dashboard'))->assertRedirect(route('bfc.login'));
+    $this->get(route('dashboard'))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('dashboard', absolute: false),
+    ]));
     $user->refresh();
     expect(auth('web')->check())->toBeFalse()
         ->and($user->status)->toBe('inactive');
 
-    $this->get(route('admin.applications.create'))->assertRedirect(route('bfc.login'));
-    $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.login'));
-    $this->post(route('sessions.protection.store', [$application, $recording]))->assertRedirect(route('bfc.login'));
-    $this->delete(route('admin.sessions.destroy', [$application, $recording]))->assertRedirect(route('bfc.login'));
+    $this->get(route('admin.applications.create'))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('admin.applications.create', absolute: false),
+    ]));
+    $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('admin.applications.show', $application, absolute: false),
+    ]));
+    $this->post(route('sessions.protection.store', [$application, $recording]))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('sessions.protection.store', [$application, $recording], absolute: false),
+    ]));
+    $this->delete(route('admin.sessions.destroy', [$application, $recording]))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('admin.sessions.destroy', [$application, $recording], absolute: false),
+    ]));
     $this->post(route('admin.application-users.destroy', $application), [
         'application_user_id' => 'removed-actor-subject',
         'confirmation' => 'removed-actor-subject',
-    ])->assertRedirect(route('bfc.login'));
+    ])->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('admin.application-users.destroy', $application, absolute: false),
+    ]));
 
     $recording->refresh();
     expect(Application::query()->whereKey($application->getKey())->value('name'))->toBe('Removal boundary application')
@@ -506,9 +519,7 @@ it('ends a removed managed session before Reel state can mutate', function (): v
 
 it('applies the package human gate to real Livewire updates after standalone session revocation', function (): void {
     $persistentMiddleware = resolve(LivewireManager::class)->getPersistentMiddleware();
-    expect($persistentMiddleware)->toContain(EnsureUserIsAuthenticated::class)
-        ->and(array_search(EnsureConsoleSession::class, $persistentMiddleware, true))
-        ->toBeLessThan(array_search(EnsureUserIsAuthenticated::class, $persistentMiddleware, true));
+    expect($persistentMiddleware)->toContain(EnsureUserIsAuthenticated::class);
 
     $user = UserFactory::factory()->create();
     $application = Application::factory()->create([

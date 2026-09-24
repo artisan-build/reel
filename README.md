@@ -753,7 +753,7 @@ part that applies to you is the list above: make `composer ready` pass, and comm
 ## Stack
 
 PHP 8.3+ · [Laravel](https://laravel.com) 13 · Livewire 4 + Flux · PostgreSQL ·
-[`artisan-build/built-for-cloud`](https://github.com/artisan-build/built-for-cloud) v0.16 for users, roles,
+[`artisan-build/built-for-cloud`](https://github.com/artisan-build/built-for-cloud) v0.17 for users, roles,
 and credentials · nodeless assets via `laravel/chisel`. Scaffolded from the
 [`artisan-build/laravel-nodeless`](https://github.com/artisan-build/laravel-nodeless) starter kit.
 
