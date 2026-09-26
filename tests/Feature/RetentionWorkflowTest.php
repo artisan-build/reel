@@ -433,7 +433,7 @@ it('drives each package role through the Reel application and retention flow aft
     $this->post('/bfc/login', [
         'email' => $operator->email,
         'password' => 'test-created-password',
-    ])->assertRedirect(route('bfc.ui.home', absolute: false));
+    ])->assertRedirect(route('bfc.dashboard', absolute: false));
     $this->get(route('bfc.dashboard'))->assertOk();
 
     $creation = Livewire::test(CreateApplication::class)

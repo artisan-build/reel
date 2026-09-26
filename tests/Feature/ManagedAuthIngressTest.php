@@ -77,7 +77,7 @@ function enterReelManagedSession(
             'state' => $handoff['state'],
             'code' => $code,
         ], absolute: false))
-        ->assertRedirect('/');
+        ->assertRedirect('/dashboard');
 
     return User::query()->where('scalpels_id', $subject)->sole();
 }
@@ -170,7 +170,7 @@ it('enters Reel through one browser-bound installation-bound managed handoff and
             'state' => $handoff['state'],
             'code' => 'valid-reel-managed-code',
         ], absolute: false))
-        ->assertRedirect('/');
+        ->assertRedirect('/dashboard');
 
     $user = User::query()->where('scalpels_id', 'subject-fixture')->sole();
     expect(session()->getId())->not->toBe($handoff['session_id'])
@@ -224,7 +224,7 @@ it('enforces the exact managed refresh and grace boundaries through Reel dashboa
             'state' => $handoff['state'],
             'code' => 'timeline-reel-managed-code',
         ], absolute: false))
-        ->assertRedirect('/');
+        ->assertRedirect('/dashboard');
     $user = User::query()->where('scalpels_id', 'subject-fixture')->sole();
 
     CarbonImmutable::setTestNow('2026-09-15T12:04:59+00:00');
