@@ -1,7 +1,6 @@
 <?php
 
 use App\Console\Commands\FinalizeRecordingSessions;
-use App\Console\Commands\Fresh;
 use App\Console\Commands\InstallFluxPro;
 use App\Console\Commands\OptimizeTailwind;
 use App\Console\Commands\ReconcileRecordingStorage;
@@ -22,7 +21,6 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withCommands([
-        Fresh::class,
         FinalizeRecordingSessions::class,
         InstallFluxPro::class,
         OptimizeTailwind::class,
