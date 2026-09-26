@@ -176,7 +176,7 @@ it('enters Reel through one browser-bound installation-bound managed handoff and
     expect(session()->getId())->not->toBe($handoff['session_id'])
         ->and(auth('web')->id())->toBe($user->getKey())
         ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
 
     $callsBeforeReplay = count($fixture->calls);
     $this->withSession([ManagedHandoff::SESSION_NONCE_KEY => $handoff['nonce']])
@@ -228,12 +228,12 @@ it('enforces the exact managed refresh and grace boundaries through Reel dashboa
     $user = User::query()->where('scalpels_id', 'subject-fixture')->sole();
 
     CarbonImmutable::setTestNow('2026-09-15T12:04:59+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     expect(reelManagedConfirmationCalls($fixture))->toBe(0)
         ->and(auth('web')->id())->toBe($user->getKey());
 
     CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     expect(reelManagedConfirmationCalls($fixture))->toBe(1)
         ->and($user->fresh()->membership_confirmed_at?->toAtomString())->toBe(now()->toAtomString())
         ->and(auth('web')->id())->toBe($user->getKey());
@@ -244,14 +244,14 @@ it('enforces the exact managed refresh and grace boundaries through Reel dashboa
     ], 503);
 
     CarbonImmutable::setTestNow('2026-09-15T12:34:59+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     expect(reelManagedConfirmationCalls($fixture))->toBe(2)
         ->and(auth('web')->id())->toBe($user->getKey())
         ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
 
     CarbonImmutable::setTestNow('2026-09-15T12:35:00+00:00');
-    $this->get(route('dashboard'))->assertRedirect(route('bfc.managed.login', [
-        'intended' => route('dashboard', absolute: false),
+    $this->get(route('bfc.dashboard'))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('bfc.dashboard', absolute: false),
     ]));
     expect(reelManagedConfirmationCalls($fixture))->toBe(2)
         ->and(auth('web')->check())->toBeFalse()
@@ -267,7 +267,7 @@ it('applies managed role and ordering changes on the next Reel request', functio
 
     $fixture->confirmationOverrides = ['role' => 'member'];
     CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     $user->refresh();
     expect($user->role)->toBe('member')
         ->and($user->managed_membership_roster_version)->toBe(9)
@@ -276,7 +276,7 @@ it('applies managed role and ordering changes on the next Reel request', functio
 
     $fixture->confirmationOverrides = ['role' => 'admin'];
     CarbonImmutable::setTestNow('2026-09-15T12:10:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     $user->refresh();
     expect($user->role)->toBe('admin')
         ->and($user->managed_membership_roster_version)->toBe(10)
@@ -293,7 +293,7 @@ it('applies managed role and ordering changes on the next Reel request', functio
         'response_sequence' => 14,
     ];
     CarbonImmutable::setTestNow('2026-09-15T12:15:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     $user->refresh();
     $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
     expect($user->role)->toBe('admin')
@@ -312,7 +312,7 @@ it('applies managed role and ordering changes on the next Reel request', functio
         'response_sequence' => 1,
     ];
     CarbonImmutable::setTestNow('2026-09-15T12:20:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
     $user->refresh();
     $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
     expect(reelManagedConfirmationCalls($fixture))->toBe(3)
@@ -337,7 +337,7 @@ it('does not let a delayed authority response regress accepted Reel role or orde
         'response_sequence' => 15,
     ];
     CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
 
     $fixture->confirmationOverrides = [
         'role' => 'member',
@@ -346,7 +346,7 @@ it('does not let a delayed authority response regress accepted Reel role or orde
         'responded_at' => '2026-09-15T12:04:00+00:00',
     ];
     CarbonImmutable::setTestNow('2026-09-15T12:10:00+00:00');
-    $this->get(route('dashboard'))->assertOk();
+    $this->get(route('bfc.dashboard'))->assertOk();
 
     $user->refresh();
     $authority = DB::table('bfc_authority')->where('key', InstallationAuthority::KEY)->first();
@@ -410,7 +410,7 @@ it('keeps subject membership and installation connection ordering independent th
         $user = $users[$subjectKey]->refresh();
         auth('web')->login($user);
         $this->withSession([StandaloneAccess::SESSION_VERSION_KEY => $user->auth_session_version])
-            ->get(route('dashboard'))
+            ->get(route('bfc.dashboard'))
             ->assertOk();
         expect(auth('web')->id())->toBe($user->getKey())
             ->and(session(StandaloneAccess::SESSION_VERSION_KEY))->toBe($user->auth_session_version);
@@ -438,7 +438,7 @@ it('keeps subject membership and installation connection ordering independent th
         expect($user)->toBeInstanceOf(User::class);
         auth('web')->login($user);
         $this->withSession([StandaloneAccess::SESSION_VERSION_KEY => $user->auth_session_version])
-            ->get(route('dashboard'))
+            ->get(route('bfc.dashboard'))
             ->assertOk();
         expect(auth('web')->id())->toBe($user->getKey())
             ->and(auth('web')->user()?->role)->toBe($role)
@@ -479,8 +479,8 @@ it('ends a removed managed session before Reel state can mutate', function (): v
 
     $fixture->confirmationOverrides = ['membership_status' => 'removed'];
     CarbonImmutable::setTestNow('2026-09-15T12:05:00+00:00');
-    $this->get(route('dashboard'))->assertRedirect(route('bfc.managed.login', [
-        'intended' => route('dashboard', absolute: false),
+    $this->get(route('bfc.dashboard'))->assertRedirect(route('bfc.managed.login', [
+        'intended' => route('bfc.dashboard', absolute: false),
     ]));
     $user->refresh();
     expect(auth('web')->check())->toBeFalse()

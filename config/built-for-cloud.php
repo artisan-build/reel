@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\ReelCredentialDeclaration;
+use App\Http\Controllers\DashboardController;
 
 return [
     'manifest' => [
@@ -12,6 +13,8 @@ return [
         'icon' => 'https://scalpels.app/img/products/transparent/reel.png',
         'product_url' => 'https://scalpels.app/products/reel',
     ],
+
+    'dashboard' => DashboardController::class,
 
     'credentials' => [
         'guard' => env('BUILT_FOR_CLOUD_CREDENTIAL_GUARD', 'bfc'),
