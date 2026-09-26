@@ -9,7 +9,7 @@ return [
         'name' => 'Reel',
         'slug' => 'reel',
         'description' => 'Customer-owned browser session replay for Laravel applications.',
-        'icon' => 'https://raw.githubusercontent.com/artisan-build/reel/main/public/favicon.svg',
+        'icon' => 'https://scalpels.app/img/products/transparent/reel.png',
         'product_url' => 'https://scalpels.app/products/reel',
     ],
 
