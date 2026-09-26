@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use App\ReelCredentialDeclaration;
 use App\Http\Controllers\DashboardController;
+use App\ReelCredentialDeclaration;
 
 return [
     'manifest' => [
