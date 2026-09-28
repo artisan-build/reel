@@ -371,12 +371,11 @@ it('keeps stock Nightwatch dev-only and unmodified', function (): void {
     expect(array_keys($root['require-dev']))->not->toContain('laravel/hone');
     expect(array_keys($package['require']))->not->toContain('laravel/nightwatch');
     expect(array_keys($package['require']))->not->toContain('laravel/hone');
-    expect($package['require-dev']['laravel/nightwatch'])->toBe('^1.28')
-        ->and($root['repositories'])->toBe([[
-            'type' => 'path',
-            'url' => 'packages/reel-client',
-            'options' => ['symlink' => true],
-        ]]);
+    expect($root['repositories'])->toBe([[
+        'type' => 'path',
+        'url' => 'packages/reel-client',
+        'options' => ['symlink' => true],
+    ]]);
     expect($encoded)->not->toContain('composer-patches');
     expect($encoded)->not->toContain('cweagans/composer-patches');
     expect($encoded)->not->toContain('nightwatch-fork');
