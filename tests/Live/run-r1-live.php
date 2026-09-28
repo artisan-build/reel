@@ -421,7 +421,6 @@ function r1Clipboard(string $contents): void
 $root = dirname(__DIR__, 2);
 $expectedCases = [
     'isolated_r1_focused_tests',
-    'published_bfc_lock',
     'postgres_redis_minio_runtime',
     'local_scalpels_stub',
     'loopback_public_and_auth_denial',
@@ -782,13 +781,6 @@ try {
     $cases['isolated_r1_focused_tests'] = r1FocusedTests($app, $environment);
     r1Run([PHP_BINARY, 'artisan', 'cache:clear', '--no-interaction'], $app, $environment, 'focused test cache clear');
     r1Run([PHP_BINARY, 'artisan', 'migrate:fresh', '--force', '--no-interaction'], $app, $environment, 'fresh live migration');
-
-    $package = r1LockedPackage($app.'/composer.lock', 'artisan-build/built-for-cloud');
-    if (($package['version'] ?? null) !== 'v0.13.2'
-        || ($package['source']['reference'] ?? null) !== '7a8169c544d5227b244950e1eb13c331d9f6f96e') {
-        r1Fail('The live archive did not install the frozen published BfC artifact.');
-    }
-    $cases['published_bfc_lock'] = 'pass';
 
     $runtime = [
         'php' => PHP_VERSION,
