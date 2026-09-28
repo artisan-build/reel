@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\AdminRecordingDeletionController;
 use App\Http\Controllers\ApplicationUserErasureController;
-use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\RecordingProtectionController;
 use App\Http\Controllers\ReplayPlayerController;
 use App\Http\Controllers\ReplayPlayerUrlController;
@@ -14,8 +13,6 @@ use App\Livewire\Sessions\Index as SessionIndex;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('bfc.auth')->group(function (): void {
-    Route::get('dashboard', DashboardController::class)->name('dashboard');
-
     Route::livewire('sessions', SessionIndex::class)->name('sessions.index');
     Route::livewire('applications/{application}/sessions', SessionIndex::class)
         ->name('applications.sessions.index');

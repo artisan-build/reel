@@ -433,8 +433,8 @@ it('drives each package role through the Reel application and retention flow aft
     $this->post('/bfc/login', [
         'email' => $operator->email,
         'password' => 'test-created-password',
-    ])->assertRedirect(route('bfc.ui.home', absolute: false));
-    $this->get(route('dashboard'))->assertOk();
+    ])->assertRedirect(route('bfc.dashboard', absolute: false));
+    $this->get(route('bfc.dashboard'))->assertOk();
 
     $creation = Livewire::test(CreateApplication::class)
         ->set('form.name', "{$role} application")
@@ -908,7 +908,7 @@ it('surfaces retention convergence protection and storage diagnostics', function
         'orphan_sweeper_suspended' => false,
     ])->and($snapshot['oldest_deleting_age_seconds'])->toBeGreaterThanOrEqual(300);
 
-    $this->actingAs(User::factory()->create())->get(route('dashboard'))
+    $this->actingAs(User::factory()->create())->get(route('bfc.dashboard'))
         ->assertOk()
         ->assertSee('Protected recordings')
         ->assertSee('Remaining prefix objects')
