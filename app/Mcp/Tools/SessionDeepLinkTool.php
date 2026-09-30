@@ -31,10 +31,10 @@ use Laravel\Mcp\Server\Tools\Annotations\IsReadOnly;
 #[ToolEffect(Effect::Read)]
 final class SessionDeepLinkTool extends Tool
 {
-    use AdvertisesToolClassification {
-        toArray as private advertisedArray;
+    use AdvertisesToolClassification, AdvertisesToolEffect {
+        AdvertisesToolClassification::toArray insteadof AdvertisesToolEffect;
+        AdvertisesToolClassification::toArray as private advertisedArray;
     }
-    use AdvertisesToolEffect;
     use RespectsEffectCeiling;
 
     /** @return array<string, mixed> */

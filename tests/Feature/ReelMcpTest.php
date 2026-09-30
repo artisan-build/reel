@@ -134,6 +134,7 @@ it('mounts and advertises exactly one delegated effect-scoped read door', functi
     $metadata = $this->getJson('/bfc/meta')->assertOk();
     $metadata->assertJsonPath('endpoints', ['mcp' => '/mcp']);
     expect($metadata->json('capabilities'))->toContain('mcp-serve', 'mcp-delegated', 'mcp-effect-scoped');
+    RequestEffectCeiling::publish(app('request'), Effect::Read->value);
 
     $route = Route::getRoutes()->match(Request::create('/mcp', 'POST'));
     expect(resolve('router')->gatherRouteMiddleware($route))
@@ -176,7 +177,7 @@ it('returns exactly the three read tools over HTTP and refuses synthetic writes 
         $this->postJson('/mcp', [
             'jsonrpc' => '2.0', 'id' => $name, 'method' => 'tools/call',
             'params' => ['name' => $name, 'arguments' => []],
-        ], $headers)->assertOk()->assertJsonPath('error.code', -32602);
+        ], $headers)->assertBadRequest()->assertJsonPath('error.code', -32602);
     }
 
     expect([Application::query()->count(), RecordingSession::query()->count()])->toBe($before);

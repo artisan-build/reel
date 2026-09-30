@@ -36,10 +36,10 @@ use Throwable;
 #[ToolEffect(Effect::Read)]
 final class SessionsTool extends Tool
 {
-    use AdvertisesToolClassification {
-        toArray as private advertisedArray;
+    use AdvertisesToolClassification, AdvertisesToolEffect {
+        AdvertisesToolClassification::toArray insteadof AdvertisesToolEffect;
+        AdvertisesToolClassification::toArray as private advertisedArray;
     }
-    use AdvertisesToolEffect;
     use RespectsEffectCeiling;
 
     private const int DEFAULT_LIMIT = 25;
