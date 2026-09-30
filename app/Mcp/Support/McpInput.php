@@ -78,12 +78,16 @@ final class McpInput
      * @param  list<string>  $default
      * @return list<string>
      */
-    public static function stringList(Request $request, string $key, array $allowed, array $default): array
+    public static function stringList(Request $request, string $key, array $allowed, array $default, int $max): array
     {
         $value = $request->get($key, $default);
 
         if (! is_array($value) || ! array_is_list($value) || $value === []) {
             self::fail($key, "The {$key} argument must be a non-empty list.");
+        }
+
+        if (count($value) > $max) {
+            self::fail($key, "The {$key} argument may not contain more than {$max} items.");
         }
 
         foreach ($value as $item) {

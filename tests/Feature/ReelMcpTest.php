@@ -11,6 +11,7 @@ use App\Models\Application;
 use App\Models\RecordingSession;
 use App\Models\ReplayView;
 use App\Services\ReplayManifest;
+use App\Services\ReplayPayloadReader;
 use ArtisanBuild\BuiltForCloud\Console\ConsoleRole;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
 use ArtisanBuild\BuiltForCloud\Credential;
@@ -32,6 +33,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Mcp\Server\Testing\TestResponse;
+use Tests\Support\User;
 
 uses(WithCredentials::class);
 
@@ -185,6 +187,16 @@ it('returns exactly the three read tools over HTTP and refuses synthetic writes 
     }
 
     expect([Application::query()->count(), RecordingSession::query()->count()])->toBe($before);
+
+    $overMaximum = $this->postJson('/mcp', [
+        'jsonrpc' => '2.0', 'id' => 'over-maximum-types', 'method' => 'tools/call',
+        'params' => ['name' => 'session_content', 'arguments' => [
+            'application' => 'app',
+            'session_id' => str_repeat('a', 64),
+            'types' => ['dom', 'dom', 'click', 'scroll', 'error'],
+        ]],
+    ], $headers)->assertOk()->assertJsonPath('result.isError', true);
+    expect($overMaximum->json('result.content.0.text'))->toContain('types');
 });
 
 it('traverses more than one hundred scoped sessions without duplicate or skipped rows', function (): void {
@@ -193,9 +205,11 @@ it('traverses more than one hundred scoped sessions without duplicate or skipped
     $credential = activeReelCredential($application);
     $foreignCredential = activeReelCredential($foreign);
 
+    $startedAt = now();
+
     foreach (range(1, 105) as $index) {
         makeMcpRecordingSession($application, $credential, attributes: [
-            'started_at' => now()->subSeconds($index),
+            'started_at' => $startedAt,
             'session_id' => str_pad(dechex($index), 64, '0', STR_PAD_LEFT),
         ]);
     }
@@ -218,6 +232,85 @@ it('traverses more than one hundred scoped sessions without duplicate or skipped
         ->and($ids->unique())->toHaveCount(105)
         ->and($ids)->not->toContain($foreignSession->session_id)
         ->and($second['next_cursor'])->toBeNull();
+});
+
+it('fragments a privacy-validated oversized event below the relay body cap without data loss', function (): void {
+    $application = Application::factory()->create();
+    $session = makeMcpRecordingSession($application, activeReelCredential($application), [[
+        'type' => 2,
+        'timestamp' => 1_000,
+        'data' => ['node' => [
+            'type' => 2,
+            'id' => 1,
+            'tagName' => 'div',
+            'attributes' => [],
+            'childNodes' => [[
+                'type' => 3,
+                'id' => 2,
+                'textContent' => str_repeat('visible replay text ', 60_000),
+            ]],
+        ]],
+    ]]);
+    $credential = $this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-fragment-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ]);
+    $headers = [
+        'Authorization' => $credential->bearerHeader(),
+        'Accept' => 'application/json, text/event-stream',
+    ];
+    $cursor = null;
+    $decoded = '';
+    $seenCursors = [];
+    $expectedOffset = 0;
+    $fragmentTotal = null;
+
+    do {
+        $arguments = [
+            'application' => $application->public_id,
+            'session_id' => $session->session_id,
+            'types' => ['dom'],
+            'limit' => 1,
+        ];
+
+        if ($cursor !== null) {
+            $arguments['cursor'] = $cursor;
+        }
+
+        $response = $this->postJson('/mcp', [
+            'jsonrpc' => '2.0', 'id' => 99, 'method' => 'tools/call',
+            'params' => ['name' => 'session_content', 'arguments' => $arguments],
+        ], $headers)->assertOk()->assertJsonPath('result.isError', false);
+        expect(strlen((string) $response->getContent()))->toBeLessThan(1_048_576);
+        $entry = $response->json('result.structuredContent.events.0');
+        expect($entry)->toBeArray()
+            ->and($entry['sequence'])->toBe(0)
+            ->and($entry['kind'])->toBe('dom')
+            ->and($entry['encoding'])->toBe('base64')
+            ->and($entry['fragment_offset'])->toBe($expectedOffset);
+        $fragment = base64_decode((string) $entry['fragment'], true);
+        expect($fragment)->toBeString();
+        $decoded .= $fragment;
+        $expectedOffset += strlen($fragment);
+        $fragmentTotal ??= $entry['fragment_total'];
+        expect($entry['fragment_total'])->toBe($fragmentTotal);
+
+        $cursor = $response->json('result.structuredContent.next_cursor');
+
+        if ($cursor !== null) {
+            expect($seenCursors)->not->toContain($cursor);
+            $seenCursors[] = $cursor;
+        }
+    } while ($cursor !== null);
+
+    $event = resolve(ReplayPayloadReader::class)->read($session)->events[0];
+    $expected = json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    expect($decoded)->toBe($expected)
+        ->and(strlen($decoded))->toBe($fragmentTotal)
+        ->and($seenCursors)->not->toBeEmpty();
 });
 
 it('bounds session markers and applies the existing filter semantics', function (): void {
@@ -361,6 +454,37 @@ it('uses the type-qualified delegated actor id for watched-session filtering', f
         ->and($payload['sessions'][0]['session_id'])->toBe($session->session_id);
 });
 
+it('never compares a store credential key to human replay-view actor ids', function (): void {
+    $application = Application::factory()->create();
+    $session = makeMcpRecordingSession($application, activeReelCredential($application));
+    $credential = $this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-watched-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ])->credential;
+    ReplayView::query()->create([
+        'actor_id' => (string) $credential->getKey(),
+        'application_id' => $application->getKey(),
+        'recording_session_id' => $session->getKey(),
+        'viewed_at' => now(),
+    ]);
+    Auth::setUser($credential);
+
+    $watched = reelMcpPayload(ReelMcpServer::tool(SessionsTool::class, [
+        'application' => $application->public_id,
+        'watched' => 'yes',
+    ])->assertOk());
+    $unwatched = reelMcpPayload(ReelMcpServer::tool(SessionsTool::class, [
+        'application' => $application->public_id,
+        'watched' => 'no',
+    ])->assertOk());
+
+    expect($watched['sessions'])->toBeEmpty()
+        ->and($unwatched['sessions'])->toHaveCount(1)
+        ->and($unwatched['sessions'][0]['session_id'])->toBe($session->session_id);
+});
+
 it('refuses foreign application session ids indistinguishably for content and links', function (): void {
     $local = Application::factory()->create();
     $foreign = Application::factory()->create();
@@ -396,9 +520,36 @@ it('returns the existing five minute signed authenticated no-store replay link w
         ->and($query['start'])->toBe('500')
         ->and($payload['authentication_required'])->toBeTrue()
         ->and($payload['cache_control'])->toBe('no-store, private')
-        ->and($payload['url'])->not->toContain('bearer', 'grant', 'private_key');
+        ->and($payload['url'])->not->toContain('bearer')
+        ->and($payload['url'])->not->toContain('grant')
+        ->and($payload['url'])->not->toContain('private_key');
 
     $this->get($payload['url'])->assertRedirect(route('bfc.login'));
+    $this->actingAs(User::factory()->create())
+        ->get($payload['url'])
+        ->assertOk()
+        ->assertHeader('Cache-Control', 'no-store, private');
+});
+
+it('invalidates a content cursor when the immutable manifest identity changes', function (): void {
+    $application = Application::factory()->create();
+    $session = makeMcpRecordingSession($application, activeReelCredential($application), [
+        ['type' => 3, 'timestamp' => 1_000, 'data' => ['source' => 3, 'id' => 1, 'x' => 0, 'y' => 1]],
+        ['type' => 3, 'timestamp' => 1_001, 'data' => ['source' => 3, 'id' => 1, 'x' => 0, 'y' => 2]],
+    ]);
+    $first = reelMcpPayload(ReelMcpServer::tool(SessionContentTool::class, [
+        'application' => $application->public_id,
+        'session_id' => $session->session_id,
+        'limit' => 1,
+    ])->assertOk());
+    $session->forceFill(['manifest_checksum' => str_repeat('f', 64)])->save();
+
+    ReelMcpServer::tool(SessionContentTool::class, [
+        'application' => $application->public_id,
+        'session_id' => $session->session_id,
+        'limit' => 1,
+        'cursor' => $first['next_cursor'],
+    ])->assertHasErrors();
 });
 
 it('rejects malformed schemas and runtime arguments', function (string $tool, array $arguments): void {
@@ -415,5 +566,9 @@ it('rejects malformed schemas and runtime arguments', function (string $tool, ar
     ]],
     'unknown list enum' => [SessionContentTool::class, [
         'application' => 'app', 'session_id' => str_repeat('a', 64), 'types' => ['raw_network_body'],
+    ]],
+    'too many raw list items before deduplication' => [SessionContentTool::class, [
+        'application' => 'app', 'session_id' => str_repeat('a', 64),
+        'types' => ['dom', 'dom', 'click', 'scroll', 'error'],
     ]],
 ]);

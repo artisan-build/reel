@@ -9,6 +9,7 @@ use App\Mcp\Support\McpInput;
 use App\Mcp\Support\OpaqueCursor;
 use App\Models\Application;
 use App\Models\RecordingSession;
+use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolEffect;
 use ArtisanBuild\BuiltForCloud\Mcp\Classification;
@@ -215,7 +216,16 @@ final class SessionsTool extends Tool
         }
 
         if ($filters['watched'] !== null) {
-            $actorId = (string) $request->user()?->getAuthIdentifier();
+            $principal = $request->user();
+            $actorId = $principal instanceof DelegatedActor ? $principal->getAuthIdentifier() : null;
+
+            if ($actorId === null) {
+                if ($filters['watched'] === 'yes') {
+                    $query->whereRaw('1 = 0');
+                }
+
+                return;
+            }
 
             if ($filters['watched'] === 'yes') {
                 $query->whereHas('replayViews', fn (Builder $views): Builder => $views->where('actor_id', $actorId));
