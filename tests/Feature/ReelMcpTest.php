@@ -134,14 +134,16 @@ it('mounts and advertises exactly one delegated effect-scoped read door', functi
     $metadata = $this->getJson('/bfc/meta')->assertOk();
     $metadata->assertJsonPath('endpoints', ['mcp' => '/mcp']);
     expect($metadata->json('capabilities'))->toContain('mcp-serve', 'mcp-delegated', 'mcp-effect-scoped');
-    RequestEffectCeiling::publish(app('request'), Effect::Read->value);
-
     $route = Route::getRoutes()->match(Request::create('/mcp', 'POST'));
     expect(resolve('router')->gatherRouteMiddleware($route))
         ->toContain(AuthenticateMcp::class.':product,read');
 
     $toolClasses = [SessionsTool::class, SessionContentTool::class, SessionDeepLinkTool::class];
-    $tools = ReelMcpServer::tools();
+    $tools = RequestEffectCeiling::run(
+        app('request'),
+        Effect::Read,
+        fn () => ReelMcpServer::tools(),
+    );
     $tools->assertRegistered($toolClasses);
 
     foreach ($toolClasses as $toolClass) {
@@ -163,7 +165,10 @@ it('returns exactly the three read tools over HTTP and refuses synthetic writes 
         'subject_ref' => 'reel-mcp-test',
         'abilities' => [OperatorAbility::McpRead->value],
     ]);
-    $headers = ['Authorization' => $credential->bearerHeader()];
+    $headers = [
+        'Authorization' => $credential->bearerHeader(),
+        'Accept' => 'application/json, text/event-stream',
+    ];
 
     $listed = $this->postJson('/mcp', [
         'jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list', 'params' => [],
