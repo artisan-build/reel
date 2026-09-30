@@ -38,6 +38,7 @@ final class SessionDeepLinkTool extends Tool
     use RespectsEffectCeiling;
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function toArray(): array
     {
         $tool = $this->advertisedArray();
@@ -47,6 +48,7 @@ final class SessionDeepLinkTool extends Tool
     }
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function schema(JsonSchema $schema): array
     {
         return [

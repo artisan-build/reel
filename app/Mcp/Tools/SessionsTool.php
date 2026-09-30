@@ -45,6 +45,7 @@ final class SessionsTool extends Tool
     private const int DEFAULT_LIMIT = 25;
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function toArray(): array
     {
         $tool = $this->advertisedArray();
@@ -54,6 +55,7 @@ final class SessionsTool extends Tool
     }
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function schema(JsonSchema $schema): array
     {
         return [
@@ -115,7 +117,7 @@ final class SessionsTool extends Tool
             });
         }
 
-        $rows = $query->orderByDesc('started_at')->orderByDesc('id')->limit($limit + 1)->get();
+        $rows = $query->latest('started_at')->orderByDesc('id')->limit($limit + 1)->get();
         $hasMore = $rows->count() > $limit;
         $rows = $rows->take($limit)->values();
         $last = $rows->last();
@@ -228,7 +230,7 @@ final class SessionsTool extends Tool
     {
         $markers = $session->markers()
             ->whereIn('marker_type', ['error', 'server_error'])
-            ->orderBy('occurred_at')
+            ->oldest('occurred_at')
             ->limit(11)
             ->get();
 

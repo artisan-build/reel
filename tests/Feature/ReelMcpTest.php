@@ -113,7 +113,6 @@ function makeMcpRecordingSession(Application $application, Credential $credentia
 function reelMcpPayload(TestResponse $response): array
 {
     $method = new ReflectionMethod($response, 'structuredContent');
-    $method->setAccessible(true);
     $payload = $method->invoke($response);
 
     expect($payload)->toBeArray();
@@ -122,7 +121,7 @@ function reelMcpPayload(TestResponse $response): array
 }
 
 beforeEach(function (): void {
-    RequestEffectCeiling::publish(app('request'), Effect::Read->value);
+    RequestEffectCeiling::publish(resolve('request'), Effect::Read->value);
     Storage::fake('local');
     config()->set('filesystems.default', 'local');
 });
@@ -140,14 +139,14 @@ it('mounts and advertises exactly one delegated effect-scoped read door', functi
 
     $toolClasses = [SessionsTool::class, SessionContentTool::class, SessionDeepLinkTool::class];
     $tools = RequestEffectCeiling::run(
-        app('request'),
+        resolve('request'),
         Effect::Read,
         fn () => ReelMcpServer::tools(),
     );
     $tools->assertRegistered($toolClasses);
 
     foreach ($toolClasses as $toolClass) {
-        $tool = app($toolClass);
+        $tool = resolve($toolClass);
         expect(ToolEffect::of($tool)?->value)->toBe(Effect::Read)
             ->and(ToolClassification::of($tool)?->value)->toBe(Classification::Content)
             ->and($tool->toArray()['inputSchema']['additionalProperties'])->toBeFalse();
@@ -391,7 +390,7 @@ it('returns the existing five minute signed authenticated no-store replay link w
         'session_id' => $session->session_id,
         'start' => 500,
     ])->assertOk());
-    parse_str((string) parse_url($payload['url'], PHP_URL_QUERY), $query);
+    parse_str((string) parse_url((string) $payload['url'], PHP_URL_QUERY), $query);
 
     expect((int) $query['expires'] - now()->getTimestamp())->toBe(300)
         ->and($query['start'])->toBe('500')

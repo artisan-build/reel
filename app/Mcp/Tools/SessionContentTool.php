@@ -40,6 +40,7 @@ final class SessionContentTool extends Tool
     private const array TYPES = ['dom', 'click', 'scroll', 'error'];
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function toArray(): array
     {
         $tool = $this->advertisedArray();
@@ -49,6 +50,7 @@ final class SessionContentTool extends Tool
     }
 
     /** @return array<string, mixed> */
+    #[\Override]
     public function schema(JsonSchema $schema): array
     {
         return [
