@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Mcp\ReelMcpServer;
 use App\Services\ReelEnrollmentScopeResolver;
 use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use ArtisanBuild\BuiltForCloud\Contracts\ResolvesAsymmetricEnrollmentScope;
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Laravel\Mcp\Facades\Mcp;
 use Livewire\Livewire;
 use RuntimeException;
 
@@ -28,6 +30,11 @@ class AppServiceProvider extends ServiceProvider
     #[\Override]
     public function register(): void
     {
+        config()->set([
+            'built-for-cloud.mcp.path' => '/mcp',
+            'built-for-cloud.mcp.delegated' => true,
+        ]);
+
         $this->app->bind(ResolvesAsymmetricEnrollmentScope::class, ReelEnrollmentScopeResolver::class);
         $this->app->scoped(IdentityContext::class, function (): IdentityContext {
             $user = request()->user();
@@ -46,6 +53,11 @@ class AppServiceProvider extends ServiceProvider
         $this->ensureCacheStoreIsConfigured();
         $this->configureDefaults();
         $this->configureRateLimiting();
+
+        $this->app->booted(function (): void {
+            Mcp::web('/mcp', ReelMcpServer::class)
+                ->middleware('bfc.mcp:product,read');
+        });
     }
 
     /** Ensure scheduler mutexes cannot silently use Laravel's null cache store. */
