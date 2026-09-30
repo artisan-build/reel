@@ -6,6 +6,7 @@ namespace App\Mcp\Tools;
 
 use App\Enums\RecordingSessionStatus;
 use App\Mcp\Support\McpInput;
+use App\Mcp\Support\McpResponse;
 use App\Mcp\Support\OpaqueCursor;
 use App\Models\Application;
 use App\Models\RecordingSession;
@@ -22,7 +23,6 @@ use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Laravel\Mcp\Request;
-use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -96,7 +96,7 @@ final class SessionsTool extends Tool
         $application = Application::query()->where('public_id', $applicationId)->first();
 
         if (! $application instanceof Application) {
-            return Response::structured(['error' => 'application_not_found']);
+            return McpResponse::structured($this, ['error' => 'application_not_found']);
         }
 
         $query = $application->recordingSessions()->with('application');
@@ -118,22 +118,34 @@ final class SessionsTool extends Tool
             });
         }
 
-        $rows = $query->latest('started_at')->orderByDesc('id')->limit($limit + 1)->get();
-        $hasMore = $rows->count() > $limit;
-        $rows = $rows->take($limit)->values();
-        $last = $rows->last();
+        $rows = $query->latest('started_at')->orderByDesc('id')->limit($limit + 1)->get()->values();
+        $sessions = [];
+        $page = null;
 
-        return Response::structured([
-            'sessions' => $rows->map(fn (RecordingSession $session): array => $this->serializeSession($session))->all(),
-            'next_cursor' => $hasMore && $last instanceof RecordingSession
-                ? OpaqueCursor::encode([
-                    'kind' => 'sessions',
-                    'scope' => $scope,
-                    'started_at' => $last->started_at->format('Y-m-d H:i:s.u'),
-                    'id' => (int) $last->getKey(),
-                ])
-                : null,
-        ]);
+        foreach ($rows->take($limit) as $index => $session) {
+            $hasMore = $index + 1 < $rows->count();
+            $candidate = [
+                'sessions' => [...$sessions, $this->serializeSession($session)],
+                'next_cursor' => $hasMore ? $this->cursor($scope, $session) : null,
+            ];
+
+            if (! McpResponse::fits($this, $candidate)) {
+                if ($page === null) {
+                    return McpResponse::structured($this, ['error' => 'session_row_exceeds_relay_limit']);
+                }
+
+                return McpResponse::structured($this, $page);
+            }
+
+            $sessions = $candidate['sessions'];
+            $page = $candidate;
+
+            if (! $hasMore || count($sessions) === $limit) {
+                return McpResponse::structured($this, $page);
+            }
+        }
+
+        return McpResponse::structured($this, ['sessions' => [], 'next_cursor' => null]);
     }
 
     /** @return array<string, int|string|null> */
@@ -270,5 +282,15 @@ final class SessionsTool extends Tool
             })->values()->all(),
             'error_markers_truncated' => $markers->count() > 10,
         ];
+    }
+
+    private function cursor(string $scope, RecordingSession $session): string
+    {
+        return OpaqueCursor::encode([
+            'kind' => 'sessions',
+            'scope' => $scope,
+            'started_at' => $session->started_at->format('Y-m-d H:i:s.u'),
+            'id' => (int) $session->getKey(),
+        ]);
     }
 }

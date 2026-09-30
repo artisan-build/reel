@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Mcp\Tools;
 
 use App\Mcp\Support\McpInput;
+use App\Mcp\Support\McpResponse;
 use App\Mcp\Support\OpaqueCursor;
 use App\Models\Application;
 use App\Services\ReplayPayloadReader;
@@ -17,7 +18,6 @@ use ArtisanBuild\BuiltForCloud\Mcp\ToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\ToolEffect;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
-use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -39,11 +39,7 @@ final class SessionContentTool extends Tool
 
     private const array TYPES = ['dom', 'click', 'scroll', 'error'];
 
-    private const int MAX_ESTIMATED_RESPONSE_BYTES = 900_000;
-
     private const int MAX_FRAGMENT_BYTES = 240_000;
-
-    private const int RESPONSE_ID_HEADROOM_BYTES = 4_096;
 
     /** @return array<string, mixed> */
     #[\Override]
@@ -80,7 +76,7 @@ final class SessionContentTool extends Tool
         $session = $application?->recordingSessions()->where('session_id', $sessionId)->first();
 
         if ($application === null || $session === null) {
-            return Response::structured(['error' => 'session_not_found']);
+            return McpResponse::structured($this, ['error' => 'session_not_found']);
         }
 
         $scope = hash('sha256', json_encode([
@@ -102,7 +98,7 @@ final class SessionContentTool extends Tool
         $payload = $reader->read($session);
 
         if ($payload->diagnostic !== null) {
-            return Response::structured([
+            return McpResponse::structured($this, [
                 'session_id' => $sessionId,
                 'diagnostic' => $payload->diagnostic,
                 'events' => [],
@@ -126,7 +122,7 @@ final class SessionContentTool extends Tool
             $eventJson = json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
             if ($fragmentOffset > 0) {
-                return Response::structured($this->fragmentPage(
+                return McpResponse::structured($this, $this->fragmentPage(
                     $sessionId,
                     $scope,
                     $index,
@@ -140,12 +136,12 @@ final class SessionContentTool extends Tool
             $entry = ['sequence' => $index, 'kind' => $type, 'event' => $event];
             $candidate = $this->page($sessionId, [...$events, $entry], $nextCursor);
 
-            if (! $this->fitsResponseBudget($candidate)) {
+            if (! McpResponse::fits($this, $candidate)) {
                 if ($events !== []) {
-                    return Response::structured($this->page($sessionId, $events, $this->cursor($scope, $index)));
+                    return McpResponse::structured($this, $this->page($sessionId, $events, $this->cursor($scope, $index)));
                 }
 
-                return Response::structured($this->fragmentPage(
+                return McpResponse::structured($this, $this->fragmentPage(
                     $sessionId,
                     $scope,
                     $index,
@@ -159,13 +155,13 @@ final class SessionContentTool extends Tool
             $events[] = $entry;
 
             if (count($events) === $limit || $nextIndex === null) {
-                return Response::structured($candidate);
+                return McpResponse::structured($this, $candidate);
             }
 
             $index = $nextIndex;
         }
 
-        return Response::structured($this->page($sessionId, [], null));
+        return McpResponse::structured($this, $this->page($sessionId, [], null));
     }
 
     /**
@@ -231,7 +227,7 @@ final class SessionContentTool extends Tool
                 'fragment' => base64_encode(substr($eventJson, $offset, $length)),
             ]], $nextCursor);
 
-            if ($this->fitsResponseBudget($page)) {
+            if (McpResponse::fits($this, $page)) {
                 return $page;
             }
 
@@ -249,23 +245,6 @@ final class SessionContentTool extends Tool
             'event_offset' => $eventOffset,
             'fragment_offset' => $fragmentOffset,
         ]);
-    }
-
-    /** @param array<string, mixed> $structured */
-    private function fitsResponseBudget(array $structured): bool
-    {
-        $text = json_encode($structured, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $body = json_encode([
-            'jsonrpc' => '2.0',
-            'id' => str_repeat('x', self::RESPONSE_ID_HEADROOM_BYTES),
-            'result' => [
-                'content' => [['type' => 'text', 'text' => $text]],
-                'isError' => false,
-                'structuredContent' => $structured,
-            ],
-        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
-
-        return strlen($body) <= self::MAX_ESTIMATED_RESPONSE_BYTES;
     }
 
     /** @param array<string, mixed> $event */

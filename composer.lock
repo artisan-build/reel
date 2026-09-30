@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "8d55d31d057ce948d53c71128c7b36d1",
+    "content-hash": "41a7164b24ae697941fb7b77558e993f",
     "packages": [
         {
             "name": "artisan-build/bfc-client",
@@ -67,16 +67,16 @@
         },
         {
             "name": "artisan-build/built-for-cloud",
-            "version": "v0.19.4",
+            "version": "v0.19.5",
             "source": {
                 "type": "git",
                 "url": "https://github.com/artisan-build/built-for-cloud.git",
-                "reference": "b8f9314604fdf7f7eb6d1f8db6511b7bd76f6063"
+                "reference": "730ae8e24dd867f08480acc7fd0e3e8d88ce275d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/b8f9314604fdf7f7eb6d1f8db6511b7bd76f6063",
-                "reference": "b8f9314604fdf7f7eb6d1f8db6511b7bd76f6063",
+                "url": "https://api.github.com/repos/artisan-build/built-for-cloud/zipball/730ae8e24dd867f08480acc7fd0e3e8d88ce275d",
+                "reference": "730ae8e24dd867f08480acc7fd0e3e8d88ce275d",
                 "shasum": ""
             },
             "require": {
@@ -135,9 +135,9 @@
             ],
             "support": {
                 "issues": "https://github.com/artisan-build/built-for-cloud/issues",
-                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.19.4"
+                "source": "https://github.com/artisan-build/built-for-cloud/tree/v0.19.5"
             },
-            "time": "2026-09-29T23:11:56+00:00"
+            "time": "2026-09-30T04:11:45+00:00"
         },
         {
             "name": "artisan-build/built-for-cloud-contracts",

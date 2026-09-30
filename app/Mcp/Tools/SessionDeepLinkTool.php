@@ -6,6 +6,7 @@ namespace App\Mcp\Tools;
 
 use App\Enums\RecordingSessionStatus;
 use App\Mcp\Support\McpInput;
+use App\Mcp\Support\McpResponse;
 use App\Models\Application;
 use App\Services\ReplayPlayerLink;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
@@ -17,7 +18,6 @@ use ArtisanBuild\BuiltForCloud\Mcp\ToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\ToolEffect;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
-use Laravel\Mcp\Response;
 use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -68,17 +68,17 @@ final class SessionDeepLinkTool extends Tool
         $session = $application?->recordingSessions()->where('session_id', $sessionId)->first();
 
         if ($application === null || $session === null) {
-            return Response::structured(['error' => 'session_not_found']);
+            return McpResponse::structured($this, ['error' => 'session_not_found']);
         }
 
         if (in_array($session->status, [RecordingSessionStatus::Deleting, RecordingSessionStatus::Deleted], true)) {
-            return Response::structured(['error' => 'replay_deletion_started']);
+            return McpResponse::structured($this, ['error' => 'replay_deletion_started']);
         }
 
         $url = $link->make($application, $session, bin2hex(random_bytes(48)), $start);
         parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
 
-        return Response::structured([
+        return McpResponse::structured($this, [
             'url' => $url,
             'expires_at' => isset($query['expires']) ? gmdate(DATE_ATOM, (int) $query['expires']) : null,
             'authentication_required' => true,

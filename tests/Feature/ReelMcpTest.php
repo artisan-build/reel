@@ -122,6 +122,15 @@ function reelMcpPayload(TestResponse $response): array
     return $payload;
 }
 
+function maximumMcpRequestId(): string
+{
+    $id = str_repeat('x', 254);
+
+    expect(strlen(json_encode($id, JSON_THROW_ON_ERROR)))->toBe(256);
+
+    return $id;
+}
+
 beforeEach(function (): void {
     RequestEffectCeiling::publish(resolve('request'), Effect::Read->value);
     Storage::fake('local');
@@ -234,7 +243,111 @@ it('traverses more than one hundred scoped sessions without duplicate or skipped
         ->and($second['next_cursor'])->toBeNull();
 });
 
-it('fragments a privacy-validated oversized event below the relay body cap without data loss', function (): void {
+it('byte-paginates sessions below the relay cap with a maximum legal request id and exact coverage', function (): void {
+    $application = Application::factory()->create();
+    $recordingCredential = activeReelCredential($application);
+    $expectedIds = [];
+    $startedAt = now();
+    $markerPath = '/'.str_repeat('x', 2047);
+
+    foreach (range(1, 30) as $index) {
+        $session = makeMcpRecordingSession($application, $recordingCredential, attributes: [
+            'started_at' => $startedAt,
+            'session_id' => str_pad(dechex($index), 64, '0', STR_PAD_LEFT),
+            'initial_path' => '/'.str_repeat('i', 254),
+            'latest_path' => '/'.str_repeat('l', 254),
+            'application_user_id' => str_repeat('u', 255),
+            'release_id' => str_repeat('r', 255),
+        ]);
+        $expectedIds[] = $session->session_id;
+
+        foreach (range(1, 10) as $marker) {
+            $session->markers()->create([
+                'application_id' => $application->getKey(),
+                'marker_type' => 'error',
+                'occurred_at' => $marker,
+                'metadata' => ['method' => 'GET', 'path' => $markerPath, 'status' => 500],
+            ]);
+        }
+    }
+
+    $credential = $this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-session-budget-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ]);
+    $headers = [
+        'Authorization' => $credential->bearerHeader(),
+        'Accept' => 'application/json, text/event-stream',
+    ];
+    $cursor = null;
+    $seenCursors = [];
+    $actualIds = [];
+    $pageSizes = [];
+
+    do {
+        $arguments = ['application' => $application->public_id, 'limit' => 30];
+
+        if ($cursor !== null) {
+            $arguments['cursor'] = $cursor;
+        }
+
+        $response = $this->postJson('/mcp', [
+            'jsonrpc' => '2.0', 'id' => maximumMcpRequestId(), 'method' => 'tools/call',
+            'params' => ['name' => 'sessions', 'arguments' => $arguments],
+        ], $headers)->assertOk()->assertJsonPath('result.isError', false);
+        expect(strlen((string) $response->getContent()))->toBeLessThan(1_048_576);
+        $sessions = $response->json('result.structuredContent.sessions');
+        expect($sessions)->toBeArray()->not->toBeEmpty();
+        $pageSizes[] = count($sessions);
+        array_push($actualIds, ...array_column($sessions, 'session_id'));
+        $cursor = $response->json('result.structuredContent.next_cursor');
+
+        if ($cursor !== null) {
+            expect($seenCursors)->not->toContain($cursor);
+            $seenCursors[] = $cursor;
+        }
+    } while ($cursor !== null);
+
+    expect($pageSizes[0])->toBeLessThan(30)
+        ->and($seenCursors)->not->toBeEmpty()
+        ->and($actualIds)->toHaveCount(30)
+        ->and($actualIds)->toHaveCount(count(array_unique($actualIds)))
+        ->and($actualIds)->toEqualCanonicalizing($expectedIds);
+});
+
+it('fails closed with a bounded error when one session row exceeds the relay cap', function (): void {
+    $application = Application::factory()->create();
+    $session = makeMcpRecordingSession($application, activeReelCredential($application));
+    $session->markers()->create([
+        'application_id' => $application->getKey(),
+        'marker_type' => 'error',
+        'occurred_at' => 1,
+        'metadata' => ['method' => 'GET', 'path' => str_repeat('x', 600_000), 'status' => 500],
+    ]);
+    $credential = $this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-oversized-session-row-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ]);
+
+    $response = $this->postJson('/mcp', [
+        'jsonrpc' => '2.0', 'id' => maximumMcpRequestId(), 'method' => 'tools/call',
+        'params' => ['name' => 'sessions', 'arguments' => [
+            'application' => $application->public_id,
+            'limit' => 1,
+        ]],
+    ], [
+        'Authorization' => $credential->bearerHeader(),
+        'Accept' => 'application/json, text/event-stream',
+    ])->assertOk()->assertJsonPath('result.structuredContent.error', 'session_row_exceeds_relay_limit');
+
+    expect(strlen((string) $response->getContent()))->toBeLessThan(1_048_576);
+});
+
+it('fragments a privacy-validated oversized event below the relay cap with a maximum legal request id and no data loss', function (): void {
     $application = Application::factory()->create();
     $session = makeMcpRecordingSession($application, activeReelCredential($application), [[
         'type' => 2,
@@ -280,7 +393,7 @@ it('fragments a privacy-validated oversized event below the relay body cap witho
         }
 
         $response = $this->postJson('/mcp', [
-            'jsonrpc' => '2.0', 'id' => 99, 'method' => 'tools/call',
+            'jsonrpc' => '2.0', 'id' => maximumMcpRequestId(), 'method' => 'tools/call',
             'params' => ['name' => 'session_content', 'arguments' => $arguments],
         ], $headers)->assertOk()->assertJsonPath('result.isError', false);
         expect(strlen((string) $response->getContent()))->toBeLessThan(1_048_576);
@@ -505,15 +618,30 @@ it('refuses foreign application session ids indistinguishably for content and li
     }
 });
 
-it('returns the existing five minute signed authenticated no-store replay link without credentials', function (): void {
+it('returns the existing replay link below the relay cap with a maximum legal request id', function (): void {
     $this->freezeTime();
     $application = Application::factory()->create();
     $session = makeMcpRecordingSession($application, activeReelCredential($application));
-    $payload = reelMcpPayload(ReelMcpServer::tool(SessionDeepLinkTool::class, [
-        'application' => $application->public_id,
-        'session_id' => $session->session_id,
-        'start' => 500,
-    ])->assertOk());
+    $credential = $this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-deep-link-budget-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ]);
+    $response = $this->postJson('/mcp', [
+        'jsonrpc' => '2.0', 'id' => maximumMcpRequestId(), 'method' => 'tools/call',
+        'params' => ['name' => 'session_deep_link', 'arguments' => [
+            'application' => $application->public_id,
+            'session_id' => $session->session_id,
+            'start' => 500,
+        ]],
+    ], [
+        'Authorization' => $credential->bearerHeader(),
+        'Accept' => 'application/json, text/event-stream',
+    ])->assertOk()->assertJsonPath('result.isError', false);
+    expect(strlen((string) $response->getContent()))->toBeLessThan(1_048_576);
+    $payload = $response->json('result.structuredContent');
+    expect($payload)->toBeArray();
     parse_str((string) parse_url((string) $payload['url'], PHP_URL_QUERY), $query);
 
     expect((int) $query['expires'] - now()->getTimestamp())->toBe(300)
