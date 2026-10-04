@@ -40,7 +40,7 @@ profile the repository is the application scaffold and its quality gate only —
   definitions.
 - CI constraint: fold package coverage into the existing `composer test` execution. Do not add a new
   CI job, rename the `ci` or `quality` jobs, or change the PHP matrix because branch protection pins
-  the literal `ci (8.4)`, `ci (8.5)`, and `quality` contexts.
+  the literal `ci (8.5)` and `quality` contexts.
 - requires a running PostgreSQL server. The suite uses a real `reel_app_test` database
   (`phpunit.xml`), not SQLite.
 - `composer audit` is network-dependent and blocking: a newly published advisory can fail the gate
@@ -50,15 +50,15 @@ profile the repository is the application scaffold and its quality gate only —
 - status: verified — testing (Pest) + static analysis (PHPStan/Larastan) both present and enforced,
   which meets the Mode A bar. Verified green on the bootstrap commit.
 - workflows/jobs:
-  - `.github/workflows/tests.yml` — `ci` job, matrix PHP 8.4 and 8.5, PostgreSQL 16 service
+  - `.github/workflows/tests.yml` — `ci` job, matrix PHP 8.5, PostgreSQL 16 service
     (`reel_app_test`): `composer stan` → `./vendor/bin/pest` → `composer audit`.
   - `.github/workflows/lint.yml` — `quality` job, PHP 8.5: `composer lint:check` (`pint --test`).
     Check-only on purpose: a CI run of `composer lint` rewrites files nothing commits, so it can
     never fail and is not a gate.
 - both trigger on push and pull_request against `main`.
-- **`main` is protected and these three checks are REQUIRED** (verified via the branch-protection
+- **`main` is protected and these two checks are REQUIRED** (verified via the branch-protection
   API on 2026-08-20):
-  - required contexts, all pinned to the GitHub Actions app (id 15368): `ci (8.4)`, `ci (8.5)`,
+  - required contexts, all pinned to the GitHub Actions app (id 15368): `ci (8.5)`,
     `quality`. These are job names, not workflow names.
   - `strict: true` — a branch must be up to date with `main` before it can merge. Expect to update
     or rebase a PR branch that fell behind, and re-wait for its checks, before `gh pr merge --squash`.
@@ -69,7 +69,7 @@ profile the repository is the application scaffold and its quality gate only —
     resolution are deliberately NOT required.
   - squash merging remains enabled on the repository, so the declared merge method still works.
 - ⚠️ **The required contexts are literal strings.** Renaming the `ci`/`quality` jobs, or changing the
-  PHP matrix in `tests.yml`, produces checks that do not match `ci (8.4)` / `ci (8.5)` / `quality` —
+  PHP matrix in `tests.yml`, produces checks that do not match `ci (8.5)` / `quality` —
   the old contexts then never report and EVERY PR blocks forever. Any PR touching those job names or
   the matrix must update the branch protection contexts in the same change.
 - ⚠️ **Nothing can be pushed straight to `main` any more.** A fresh commit has no checks, so the push
@@ -158,5 +158,5 @@ not strictly related to the work at hand.**
   ride-along rule says gets its own dedicated branch and PR.
 - PHPStan level 6 with a deliberately EMPTY `phpstan-baseline.neon`. Keep it empty; fix findings
   rather than baselining them.
-- Local development PHP is 8.4; CI additionally covers 8.5. A gate that passes locally has only been
+- Local development PHP is 8.4; CI covers 8.5 only. A gate that passes locally has only been
   proven on 8.4 — CI is what proves 8.5.
