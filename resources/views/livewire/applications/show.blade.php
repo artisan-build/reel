@@ -42,6 +42,7 @@
     <section class="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-700 dark:bg-zinc-900">
         <flux:heading>{{ __('Capture policy') }}</flux:heading>
         <flux:text class="mt-2">{{ __('Protection is monotonic: input and contenteditable values are always masked. Settings can add masking or blocking but can never expose them.') }}</flux:text>
+        <flux:text class="mt-2">{{ __('Reel enforces every setting below on its own servers as each chunk arrives, so a tampered browser cannot bypass them.') }}</flux:text>
 
         <form wire:submit="updateApplication" class="mt-6 space-y-6">
             <flux:input wire:model="form.name" :label="__('Name')" required />
@@ -57,12 +58,12 @@
             </flux:field>
 
             <div class="grid gap-6 md:grid-cols-2">
-                <flux:textarea wire:model="form.maskSelectors" :label="__('Additional mask selectors')" rows="5" placeholder=".customer-name" />
-                <flux:textarea wire:model="form.blockSelectors" :label="__('Additional block selectors')" rows="5" placeholder=".payment-panel" />
+                <flux:textarea wire:model="form.maskSelectors" :label="__('Additional mask selectors')" rows="5" placeholder=".customer-name" :description="__('One per line. A tag name with #id and .class tokens, such as span.customer-name. Matched elements have their whole subtree of text replaced.')" />
+                <flux:textarea wire:model="form.blockSelectors" :label="__('Additional block selectors')" rows="5" placeholder=".payment-panel" :description="__('One per line, same form as mask selectors. Matched elements are replaced by an empty placeholder that keeps only their size.')" />
             </div>
 
-            <flux:textarea wire:model="form.excludedPaths" :label="__('Excluded paths')" rows="4" placeholder="/billing/*" />
-            <flux:input wire:model="form.samplingPercent" :label="__('Sampling percent')" type="number" min="0" max="100" required />
+            <flux:textarea wire:model="form.excludedPaths" :label="__('Excluded paths')" rows="4" placeholder="/billing/*" :description="__('One path pattern per line, with * as a wildcard. No chunk recorded on a matching path is stored.')" />
+            <flux:input wire:model="form.samplingPercent" :label="__('Sampling percent')" type="number" min="0" max="100" required :description="__('The share of sessions Reel keeps. The decision is made once per session, so a session is recorded in full or not at all.')" />
 
             <div class="flex justify-end">
                 <flux:button variant="primary" type="submit">{{ __('Save capture policy') }}</flux:button>

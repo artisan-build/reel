@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Enums\CaptureSeverity;
 use App\Enums\RecordingSessionStatus;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Livewire\Sessions\Index;
@@ -1817,4 +1818,201 @@ it('assigns epoch chronology from server first-seen order rather than client ids
         ->toBe(['z-first', 'a-second'])
         ->and(RecordingEpoch::query()->orderBy('ordinal')->pluck('ordinal')->all())
         ->toBe([1, 2]);
+});
+
+it('masks every rendered text node at ingest when the application selects all text', function (): void {
+    $context = ingestContext(['severity' => CaptureSeverity::AllText]);
+    $timestamp = now()->getTimestampMs();
+    $events = [
+        [
+            'type' => 2,
+            'timestamp' => $timestamp,
+            'data' => [
+                'node' => [
+                    'type' => 2,
+                    'id' => 1,
+                    'tagName' => 'div',
+                    'attributes' => ['class' => 'content'],
+                    'childNodes' => [
+                        ['type' => 3, 'id' => 2, 'textContent' => 'Jane Patient 1980-01-01'],
+                        [
+                            'type' => 2,
+                            'id' => 3,
+                            'tagName' => 'style',
+                            'attributes' => [],
+                            'childNodes' => [
+                                ['type' => 3, 'id' => 4, 'textContent' => '.content { color: red; }'],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+        [
+            'type' => 3,
+            'timestamp' => $timestamp + 1,
+            'data' => ['source' => 0, 'texts' => [['id' => 2, 'value' => 'Jane Patient moved house']]],
+        ],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    $stored = implode("\n", decodedStoredChunks());
+
+    expect($stored)->not->toContain('Jane Patient')
+        ->and($stored)->toContain('***')
+        ->and($stored)->toContain('color: red');
+});
+
+it('leaves rendered text intact at ingest under the input-only baseline', function (): void {
+    $context = ingestContext(['severity' => CaptureSeverity::Inputs]);
+
+    postIngestEnvelope(ingestEnvelope($context))->assertAccepted();
+
+    expect(implode("\n", decodedStoredChunks()))->toContain('Safe visible text');
+});
+
+it('masks the subtree of every configured mask selector at ingest', function (): void {
+    $context = ingestContext(['mask_selectors' => ['.customer-name']]);
+    $timestamp = now()->getTimestampMs();
+    $events = [[
+        'type' => 2,
+        'timestamp' => $timestamp,
+        'data' => [
+            'node' => [
+                'type' => 2,
+                'id' => 1,
+                'tagName' => 'div',
+                'attributes' => ['class' => 'content'],
+                'childNodes' => [
+                    [
+                        'type' => 2,
+                        'id' => 2,
+                        'tagName' => 'span',
+                        'attributes' => ['class' => 'customer-name'],
+                        'childNodes' => [['type' => 3, 'id' => 3, 'textContent' => 'Jane Patient']],
+                    ],
+                    ['type' => 3, 'id' => 4, 'textContent' => 'Order total'],
+                ],
+            ],
+        ],
+    ]];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    $stored = implode("\n", decodedStoredChunks());
+
+    expect($stored)->not->toContain('Jane Patient')
+        ->and($stored)->toContain('Order total');
+});
+
+it('replaces every configured block selector subtree with a placeholder at ingest', function (): void {
+    $context = ingestContext(['block_selectors' => ['.payment-panel']]);
+    $timestamp = now()->getTimestampMs();
+    $events = [[
+        'type' => 2,
+        'timestamp' => $timestamp,
+        'data' => [
+            'node' => [
+                'type' => 2,
+                'id' => 1,
+                'tagName' => 'div',
+                'attributes' => ['class' => 'content'],
+                'childNodes' => [
+                    [
+                        'type' => 2,
+                        'id' => 2,
+                        'tagName' => 'section',
+                        'attributes' => ['class' => 'payment-panel', 'width' => '320'],
+                        'childNodes' => [['type' => 3, 'id' => 3, 'textContent' => '4111111111111111']],
+                    ],
+                ],
+            ],
+        ],
+    ]];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+
+    $stored = implode("\n", decodedStoredChunks());
+
+    expect($stored)->not->toContain('4111111111111111')
+        ->and($stored)->toContain('data-reel-blocked');
+});
+
+it('refuses to store any chunk recorded on an excluded path', function (): void {
+    $context = ingestContext(['excluded_paths' => ['/billing/*']]);
+    $timestamp = now()->getTimestampMs();
+    $events = [
+        ...safeIngestEvents($timestamp),
+        ['type' => 4, 'timestamp' => $timestamp + 1, 'data' => ['href' => '/billing/invoices']],
+    ];
+
+    postIngestEnvelope(ingestEnvelope($context, $events))
+        ->assertForbidden()
+        ->assertJson(['accepted' => false, 'reason' => 'excluded_path']);
+
+    expect(RecordingChunk::query()->count())->toBe(0);
+
+    postIngestEnvelope(ingestEnvelope($context, [
+        ...safeIngestEvents($timestamp),
+        ['type' => 4, 'timestamp' => $timestamp + 1, 'data' => ['href' => '/orders']],
+    ]))->assertAccepted();
+});
+
+it('refuses later chunks of a session whose current path becomes excluded', function (): void {
+    $context = ingestContext(['excluded_paths' => []]);
+    $grant = ingestGrant($context);
+    $timestamp = now()->getTimestampMs();
+
+    postIngestEnvelope(ingestEnvelope($context, [
+        ...safeIngestEvents($timestamp),
+        ['type' => 4, 'timestamp' => $timestamp + 1, 'data' => ['href' => '/billing/invoices']],
+    ], ['grant' => $grant]))->assertAccepted();
+
+    $context['application']->forceFill(['excluded_paths' => ['/billing/*']])->save();
+
+    postIngestEnvelope(ingestEnvelope($context, safeIngestEvents($timestamp + 2), [
+        'sequence' => 1,
+        'grant' => $grant,
+    ]))
+        ->assertForbidden()
+        ->assertJson(['accepted' => false, 'reason' => 'excluded_path']);
+
+    expect(RecordingChunk::query()->count())->toBe(1);
+});
+
+it('stores nothing for an application whose sampling rate excludes every session', function (): void {
+    $context = ingestContext(['sampling_percent' => 0]);
+
+    postIngestEnvelope(ingestEnvelope($context))
+        ->assertForbidden()
+        ->assertJson(['accepted' => false, 'reason' => 'session_not_sampled']);
+
+    expect(RecordingChunk::query()->count())->toBe(0)
+        ->and(RecordingSession::query()->count())->toBe(0);
+});
+
+it('decides sampling once per session so a session is wholly in or wholly out', function (): void {
+    $context = ingestContext(['sampling_percent' => 50]);
+
+    $sampled = $context;
+    $sampled['session_id'] = str_repeat('a', 64);
+    $sampledGrant = ingestGrant($sampled);
+
+    postIngestEnvelope(ingestEnvelope($sampled, overrides: ['grant' => $sampledGrant]))->assertAccepted();
+    postIngestEnvelope(ingestEnvelope($sampled, overrides: ['sequence' => 1, 'grant' => $sampledGrant]))->assertAccepted();
+
+    $unsampled = $context;
+    $unsampled['session_id'] = str_repeat('c', 64);
+    $unsampledGrant = ingestGrant($unsampled);
+
+    postIngestEnvelope(ingestEnvelope($unsampled, overrides: ['grant' => $unsampledGrant]))
+        ->assertForbidden()
+        ->assertJson(['reason' => 'session_not_sampled']);
+    postIngestEnvelope(ingestEnvelope($unsampled, overrides: ['sequence' => 1, 'grant' => $unsampledGrant]))
+        ->assertForbidden()
+        ->assertJson(['reason' => 'session_not_sampled']);
+
+    expect(RecordingSession::query()->pluck('session_id')->all())->toBe([str_repeat('a', 64)])
+        ->and(RecordingChunk::query()->count())->toBe(2);
 });

@@ -47,6 +47,7 @@ class ChunkIngestor
         private readonly SessionGrantVerifier $grantVerifier,
         private readonly AsymmetricVerificationKeys $verificationKeys,
         private readonly ChunkPrivacyValidator $privacyValidator,
+        private readonly ApplicationCapturePolicy $capturePolicy,
         private readonly OperationalCounters $operationalCounters,
         private readonly ObjectMutationLock $objectLocks,
     ) {}
@@ -90,6 +91,7 @@ class ChunkIngestor
             $this->reject('invalid_grant_claims', 401);
         }
 
+        $this->capturePolicy->assertSessionSampled($application, $envelope['session_id']);
         $this->recordIngestAttempt($application);
 
         $compressed = base64_decode((string) $envelope['payload'], true);
@@ -133,6 +135,14 @@ class ChunkIngestor
         }
 
         $this->assertEventTimes($events, $envelope, $issuedAt, $maxEventTime);
+        $this->capturePolicy->assertPathsAllowed($application, $events, $this->currentPath($application, $envelope));
+        [$events, $validatedCompressed, $decompressedBytes, $storedChecksum] = $this->enforceCapturePolicy(
+            $application,
+            $events,
+            $validatedCompressed,
+            strlen($decompressed),
+            $envelope['checksum'],
+        );
 
         try {
             $result = $this->persist(
@@ -140,7 +150,8 @@ class ChunkIngestor
                 $credential,
                 $envelope,
                 $validatedCompressed,
-                strlen($decompressed),
+                $decompressedBytes,
+                $storedChecksum,
                 $origin,
                 $grantId,
                 $ceilings,
@@ -270,6 +281,55 @@ class ChunkIngestor
             || max($timestamps) !== $envelope['event_ended_at']) {
             $this->reject('event_bounds_mismatch', 422);
         }
+    }
+
+    /** @param array<string, mixed> $envelope */
+    private function currentPath(Application $application, array $envelope): ?string
+    {
+        $session = RecordingSession::query()
+            ->where('application_id', $application->getKey())
+            ->where('session_id', $envelope['session_id'])
+            ->first();
+
+        return $session instanceof RecordingSession && is_string($session->latest_path)
+            ? $session->latest_path
+            : null;
+    }
+
+    /**
+     * Rewrites the chunk the monitored browser sent so the application's saved masking and
+     * blocking policy holds in the stored object, which no visitor can influence. The stored
+     * checksum covers the bytes actually written so compaction and retries still verify.
+     *
+     * @param  list<array<string, mixed>>  $events
+     * @return array{list<array<string, mixed>>, string, int, string}
+     */
+    private function enforceCapturePolicy(
+        Application $application,
+        array $events,
+        string $compressed,
+        int $decompressedBytes,
+        string $checksum,
+    ): array {
+        $enforced = $this->capturePolicy->apply($application, $events);
+
+        if ($enforced === $events) {
+            return [$events, $compressed, $decompressedBytes, $checksum];
+        }
+
+        try {
+            $decompressed = json_encode($enforced, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            $this->reject('policy_encoding_failed', 422);
+        }
+
+        $recompressed = gzencode($decompressed, 6);
+
+        if ($recompressed === false) {
+            $this->reject('policy_encoding_failed', 422);
+        }
+
+        return [$enforced, $recompressed, strlen($decompressed), hash('sha256', $recompressed)];
     }
 
     private function recordIngestAttempt(Application $application): void
@@ -410,6 +470,7 @@ class ChunkIngestor
         array $envelope,
         string $compressed,
         int $decompressedBytes,
+        string $storedChecksum,
         string $origin,
         string $grantId,
         array $ceilings,
@@ -426,6 +487,7 @@ class ChunkIngestor
             $envelope,
             $compressed,
             $decompressedBytes,
+            $storedChecksum,
             $origin,
             $grantId,
             $ceilings,
@@ -522,7 +584,7 @@ class ChunkIngestor
                 ->first();
 
             if ($existing instanceof RecordingChunk) {
-                if (hash_equals($existing->checksum, $envelope['checksum'])) {
+                if (hash_equals($existing->checksum, $storedChecksum)) {
                     return new ChunkIngestResult(true, $origin);
                 }
 
@@ -586,7 +648,7 @@ class ChunkIngestor
                     'application_id' => $lockedApplication->getKey(),
                     'epoch_id' => $envelope['epoch_id'],
                     'sequence' => $envelope['sequence'],
-                    'checksum' => $envelope['checksum'],
+                    'checksum' => $storedChecksum,
                     'compressed_bytes' => $compressedBytes,
                     'decompressed_bytes' => $decompressedBytes,
                     'event_started_at' => $envelope['event_started_at'],

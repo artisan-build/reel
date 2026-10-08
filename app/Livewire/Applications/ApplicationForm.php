@@ -5,6 +5,8 @@ namespace App\Livewire\Applications;
 use App\Enums\CaptureSeverity;
 use App\Models\Application;
 use App\Rules\Origin;
+use App\Services\ApplicationCapturePolicy;
+use Closure;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Livewire\Form;
@@ -58,13 +60,22 @@ class ApplicationForm extends Form
             'sampling_percent' => $this->samplingPercent,
         ];
 
+        $selector = function (string $attribute, mixed $value, Closure $fail): void {
+            if (! is_string($value) || ApplicationCapturePolicy::parseSelector($value) === null) {
+                $fail(__('Reel can only enforce a tag name with :hash id and :dot class tokens, for example .customer-name.', [
+                    'hash' => '#',
+                    'dot' => '.',
+                ]));
+            }
+        };
+
         Validator::make($data, [
             'allowed_origins' => ['required', 'array', 'min:1', 'max:20'],
             'allowed_origins.*' => ['distinct', new Origin],
             'mask_selectors' => ['array', 'max:100'],
-            'mask_selectors.*' => ['string', 'max:500'],
+            'mask_selectors.*' => ['string', 'max:500', $selector],
             'block_selectors' => ['array', 'max:100'],
-            'block_selectors.*' => ['string', 'max:500'],
+            'block_selectors.*' => ['string', 'max:500', $selector],
             'excluded_paths' => ['array', 'max:100'],
             'excluded_paths.*' => ['string', 'max:500', 'starts_with:/'],
         ])->validate();
