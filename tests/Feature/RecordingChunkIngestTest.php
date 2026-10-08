@@ -1945,7 +1945,9 @@ it('replaces every configured block selector subtree with a placeholder at inges
     $stored = implode("\n", decodedStoredChunks());
 
     expect($stored)->not->toContain('4111111111111111')
-        ->and($stored)->toContain('data-reel-blocked');
+        ->and($stored)->toContain('data-reel-blocked')
+        ->and($stored)->toContain('"width":"320"')
+        ->and($stored)->toContain('"class":"payment-panel"');
 });
 
 it('refuses to store any chunk recorded on an excluded path', function (): void {
