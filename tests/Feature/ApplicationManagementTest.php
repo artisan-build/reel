@@ -489,3 +489,25 @@ it('allows overlapping credentials and revokes only the selected credential', fu
         ->and(Credential::query()->count())->toBe(2)
         ->and(Application::query()->count())->toBe(1);
 });
+
+it('refuses a selector Reel cannot enforce at ingest and keeps the saved policy', function (): void {
+    $application = Application::factory()->create([
+        'mask_selectors' => ['.account-number'],
+    ]);
+
+    $this->actingAs(User::factory()->admin()->create());
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->set('form.maskSelectors', '.account-number div > span:has(em)')
+        ->call('updateApplication')
+        ->assertHasErrors();
+
+    expect($application->refresh()->mask_selectors)->toBe(['.account-number']);
+
+    Livewire::test(Show::class, ['application' => $application])
+        ->set('form.maskSelectors', "span.account-number\n#totals")
+        ->call('updateApplication')
+        ->assertHasNoErrors();
+
+    expect($application->refresh()->mask_selectors)->toBe(['span.account-number', '#totals']);
+});
