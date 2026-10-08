@@ -1855,13 +1855,22 @@ it('masks every rendered text node at ingest when the application selects all te
         ],
     ];
 
-    postIngestEnvelope(ingestEnvelope($context, $events))->assertAccepted();
+    $envelope = ingestEnvelope($context, $events);
+    postIngestEnvelope($envelope)->assertAccepted();
 
     $stored = implode("\n", decodedStoredChunks());
+    $chunk = RecordingChunk::query()->sole();
+    $object = Storage::disk('local')->get($chunk->object_key);
 
     expect($stored)->not->toContain('Jane Patient')
         ->and($stored)->toContain('***')
-        ->and($stored)->toContain('color: red');
+        ->and($stored)->toContain('color: red')
+        ->and($chunk->checksum)->toBe(hash('sha256', (string) $object))
+        ->and($chunk->decompressed_bytes)->toBe(strlen($stored));
+
+    postIngestEnvelope($envelope)->assertOk()->assertJson(['accepted' => true, 'duplicate' => true]);
+
+    expect(RecordingChunk::query()->count())->toBe(1);
 });
 
 it('leaves rendered text intact at ingest under the input-only baseline', function (): void {
