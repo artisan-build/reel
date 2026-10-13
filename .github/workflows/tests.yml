@@ -94,6 +94,11 @@ jobs:
           tools: composer:v2
           coverage: none
 
+      - name: Install JavaScriptCore for recorder tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libjavascriptcoregtk-4.1-bin || sudo apt-get install -y libjavascriptcoregtk-4.0-bin
+
       - name: Install lowest supported dependencies
         run: |
           composer update --working-dir=packages/reel-client --no-interaction --prefer-dist \
