@@ -77,3 +77,38 @@ jobs:
         run: |
           composer audit
           composer audit --working-dir=packages/reel-client
+
+  lowest:
+    name: lowest (Laravel 13.17.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install JavaScriptCore for recorder tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libjavascriptcoregtk-4.1-bin || sudo apt-get install -y libjavascriptcoregtk-4.0-bin
+
+      - name: Install lowest supported dependencies
+        run: |
+          composer update --working-dir=packages/reel-client --no-interaction --prefer-dist \
+            --with=laravel/framework:13.17.0 \
+            --with=orchestra/testbench:11.0.0 \
+            --no-blocking \
+            --ignore-platform-req=php+
+
+      - name: Show resolved Laravel version
+        run: composer show --working-dir=packages/reel-client laravel/framework
+
+      - name: Run client suite
+        run: composer test --working-dir=packages/reel-client

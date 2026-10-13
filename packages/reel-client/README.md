@@ -5,6 +5,8 @@ frontend build.
 
 ## Install
 
+Reel Client requires Laravel 13.17 or newer.
+
 ```bash
 composer require artisan-build/reel-client
 php artisan reel:install
