@@ -1,0 +1,59 @@
+name: release-splits
+
+# Lockstep release: a vX.Y.Z tag on the monorepo mirrors reel-client to its
+# read-only split repository and applies the same tag there.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Cross-repository pushes use SPLIT_REPO_TOKEN, a fine-grained PAT with
+# Contents: write access to artisan-build/reel-client.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-splits
+  cancel-in-progress: false
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for git subtree split)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies (including Kibble)
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Prepare application environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Configure git auth for the split push
+        env:
+          SPLIT_REPO_TOKEN: ${{ secrets.SPLIT_REPO_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://x-access-token:${SPLIT_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Split and tag reel-client
+        env:
+          APP_ENV: production
+          GH_ORGANIZATION: artisan-build
+          GH_USERNAME: x-access-token
+          GH_TOKEN: ${{ secrets.SPLIT_REPO_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: php artisan kibble:split reel-client --tag="${RELEASE_TAG}"

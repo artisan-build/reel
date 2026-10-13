@@ -371,54 +371,14 @@ Full deployment, recovery, upgrade, rotation, backup, and uninstall procedures a
 The order below matters. The enrollment code you get from Reel lives for **15 minutes**, so everything slow —
 installing the package, resolving dependencies, marking routes — happens *before* you mint it.
 
-**Your monitored application must run Laravel 13.** The client requires `illuminate/console`,
-`illuminate/contracts`, `illuminate/http`, `illuminate/routing`, `illuminate/session`, `illuminate/support`
-and `illuminate/view` at `^13.0`. On Laravel 12 or older, Composer will refuse to resolve it.
+**Your monitored application must run Laravel 13.17 or newer.** On Laravel 13.16 or older, Composer will
+refuse to resolve the client.
 
 #### 1. Install the Reel client
 
-`artisan-build/reel-client` is **not on Packagist yet**, and Composer cannot fetch it from this repository
-over Git either: it lives in a subdirectory, and the repository's root package is `artisan-build/reel`.
-Composer installs a package from a repository root, never from a folder inside another package.
-
-Until the client is split out and published, **copy it into your own application's source tree and commit
-it.** A path repository pointing at a clone somewhere on your laptop will not work: Composer records that
-path in `composer.lock`, and on your build server the path does not exist, so `composer install` fails with
-`Source path "..." is not found for package artisan-build/reel-client`. A path *inside* the application is
-recorded relative to the application and is present in every checkout.
-
 ```bash
-# in the application you want to record
-git clone --depth 1 https://github.com/artisan-build/reel.git /tmp/reel
-mkdir -p vendor-src
-cp -R /tmp/reel/packages/reel-client vendor-src/reel-client
-rm -rf /tmp/reel vendor-src/reel-client/vendor vendor-src/reel-client/composer.lock
-
-composer config repositories.reel-client \
-  '{"type":"path","url":"vendor-src/reel-client","options":{"symlink":false}}'
 composer require artisan-build/reel-client
 ```
-
-Two details carry the weight:
-
-- **The `url` is relative** (`vendor-src/reel-client`, not `/Users/you/...`). Check it landed that way:
-  `grep -A2 '"artisan-build/reel-client"' composer.lock` should show `"url": "vendor-src/reel-client"`.
-- **`"symlink": false`** makes Composer copy the package into `vendor/` instead of symlinking it, so the
-  installed tree does not depend on anything outside `vendor-src/`.
-
-Commit `vendor-src/reel-client`, `composer.json` and `composer.lock` together — `vendor-src/` is ordinary
-application source now, and your deployment needs it. Make sure it is not covered by a `.gitignore` rule.
-
-To take a newer client later, replace the contents of `vendor-src/reel-client` from a fresh clone and run
-`composer update artisan-build/reel-client`.
-
-**Prove it before you go on.** This is exactly what your build server will do:
-
-```bash
-rm -rf vendor && composer install
-```
-
-If that succeeds with no `vendor/` present, your deployment will succeed too.
 
 #### 2. Hide sensitive routes
 
