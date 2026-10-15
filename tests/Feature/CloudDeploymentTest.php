@@ -55,6 +55,7 @@ $app->bootstrapWith([
 ]);
 echo json_encode([
     'database.default' => config('database.default'),
+    'database.redis.client' => config('database.redis.client'),
     'queue.default' => config('queue.default'),
     'filesystems.default' => config('filesystems.default'),
     'cache.default' => config('cache.default'),
@@ -74,6 +75,96 @@ PHP;
 
     return json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
 }
+
+function requestCloudMetadataWithoutRedisClient(): Process
+{
+    $script = <<<'PHP'
+require 'vendor/autoload.php';
+
+$app = require 'bootstrap/app.php';
+$app->loadEnvironmentFrom('.env.cloud-invariant-absent');
+
+$request = Illuminate\Http\Request::create('/bfc/meta', 'GET', server: [
+    'HTTP_ACCEPT' => 'application/json',
+    'REMOTE_ADDR' => '127.0.0.1',
+]);
+$app->instance('request', $request);
+
+$kernel = $app->make(Illuminate\Contracts\Http\Kernel::class);
+$kernel->bootstrap();
+
+$client = new class
+{
+    public function get(string $key): null
+    {
+        return null;
+    }
+
+    public function eval(string $script, int $keys, mixed ...$arguments): bool
+    {
+        return true;
+    }
+
+    public function incrby(string $key, int $value): int
+    {
+        return $value;
+    }
+
+    public function setex(string $key, int $seconds, mixed $value): bool
+    {
+        return true;
+    }
+};
+
+$connection = new class($client) extends Illuminate\Redis\Connections\Connection
+{
+    public function __construct(object $client)
+    {
+        $this->client = $client;
+    }
+
+    public function createSubscription($channels, Closure $callback, $method = 'subscribe'): void {}
+};
+
+$connector = new class($connection) implements Illuminate\Contracts\Redis\Connector
+{
+    public function __construct(private Illuminate\Redis\Connections\Connection $connection) {}
+
+    public function connect(array $config, array $options): Illuminate\Redis\Connections\Connection
+    {
+        return $this->connection;
+    }
+
+    public function connectToCluster(array $config, array $clusterOptions, array $options): Illuminate\Redis\Connections\Connection
+    {
+        return $this->connection;
+    }
+};
+
+$app->make('redis')->extend('phpredis', fn (): Illuminate\Contracts\Redis\Connector => $connector);
+
+$response = $kernel->handle($request);
+
+echo $response->getStatusCode();
+
+$kernel->terminate($request, $response);
+PHP;
+
+    return new Process([PHP_BINARY, '-r', $script], base_path(), [
+        'APP_CONFIG_CACHE' => base_path('bootstrap/cache/cloud-redis-management-test.php'),
+        'APP_DEBUG' => 'false',
+        'APP_ENV' => 'testing',
+        'CACHE_STORE' => 'redis',
+        'REDIS_CLIENT' => false,
+    ]);
+}
+
+it('serves the management endpoint when Cloud does not inject a Redis client selector', function (): void {
+    $process = requestCloudMetadataWithoutRedisClient();
+    $process->mustRun();
+
+    expect(trim($process->getOutput()))->toBe('200');
+});
 
 it('keeps the catalog manifest aligned with live application configuration and scheduler registration', function (): void {
     $manifest = cloudManifest();
@@ -135,13 +226,14 @@ it('never deploys configuration that shadows Cloud managed resource values', fun
 
     expect($resolved)->toHaveKeys([...$managedConfig, 'session.driver'])
         ->and($resolved['session.driver'])->toBe('cookie')
-        ->and($resolvedWithInjectedSession['session.driver'])->toBe('redis');
+        ->and($resolvedWithInjectedSession['session.driver'])->toBe('redis')
+        ->and($resolved['database.redis.client'])->toBe('phpredis');
 
     foreach ($managedConfig as $key) {
         expect($resolved[$key])->toBeNull("Cloud-managed config key {$key} resolves to an application-set value");
     }
 
-    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_[A-Z0-9_]+)';
+    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_(?!CLIENT\b)[A-Z0-9_]+)';
 
     foreach (glob(base_path('config/*.php')) ?: [] as $path) {
         $contents = file_get_contents($path);
