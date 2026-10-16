@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Aws\Sqs\SqsClient;
-use Illuminate\Support\Arr;
 use Symfony\Component\Process\Process;
 
 it('ships the managed SQS runtime driver', function (): void {
@@ -42,6 +41,14 @@ it('ships the managed SQS runtime driver', function (): void {
         flags: JSON_THROW_ON_ERROR,
     );
 
-    expect(Arr::except($sqsConfigWithoutEnvironment, ['driver', 'after_commit']))
-        ->each->toBeNull();
+    expect($sqsConfigWithoutEnvironment)->toBe([
+        'driver' => 'sqs',
+        'key' => null,
+        'secret' => null,
+        'prefix' => 'https://sqs.us-east-1.amazonaws.com/your-account-id',
+        'queue' => 'default',
+        'suffix' => null,
+        'region' => 'us-east-1',
+        'after_commit' => false,
+    ]);
 });

@@ -43,7 +43,7 @@ function useManagedQueue(string $provisioned = 'reel-queue-927aa415'): void
 }
 
 /** @return array<string, mixed> */
-function resolvedCloudConfig(?string $sessionDriver = null): array
+function resolvedCloudConfig(array $environment = []): array
 {
     $script = <<<'PHP'
 require 'vendor/autoload.php';
@@ -62,15 +62,15 @@ echo json_encode([
     'session.driver' => config('session.driver'),
 ], JSON_THROW_ON_ERROR);
 PHP;
-    $process = new Process([PHP_BINARY, '-r', $script], base_path(), [
+    $process = new Process([PHP_BINARY, '-r', $script], base_path(), array_replace([
         'APP_CONFIG_CACHE' => base_path('bootstrap/cache/cloud-invariant-config.php'),
         'APP_ENV' => 'testing',
         'DB_CONNECTION' => false,
         'QUEUE_CONNECTION' => false,
         'FILESYSTEM_DISK' => false,
         'CACHE_STORE' => false,
-        'SESSION_DRIVER' => $sessionDriver ?? false,
-    ]);
+        'SESSION_DRIVER' => false,
+    ], $environment));
     $process->mustRun();
 
     return json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
@@ -159,11 +159,109 @@ PHP;
     ]);
 }
 
+/** @return array<string, mixed> */
+function validatedCloudRedisConfig(): array
+{
+    $script = <<<'PHP'
+require 'vendor/autoload.php';
+
+$app = require 'bootstrap/app.php';
+$app->loadEnvironmentFrom('.env.cloud-invariant-absent');
+$app->bootstrapWith([
+    Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+    Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+]);
+
+$connector = new class extends Illuminate\Redis\Connectors\PhpRedisConnector
+{
+    public function validatedBackoffAlgorithm(mixed $algorithm): int
+    {
+        return $this->parseBackoffAlgorithm($algorithm);
+    }
+};
+
+$default = config('database.redis.default');
+$cache = config('database.redis.cache');
+
+echo json_encode([
+    'client' => config('database.redis.client'),
+    'options' => config('database.redis.options'),
+    'default' => Illuminate\Support\Arr::only($default, [
+        'host',
+        'port',
+        'database',
+        'max_retries',
+        'backoff_algorithm',
+        'backoff_base',
+        'backoff_cap',
+    ]),
+    'cache' => Illuminate\Support\Arr::only($cache, [
+        'host',
+        'port',
+        'database',
+        'max_retries',
+        'backoff_algorithm',
+        'backoff_base',
+        'backoff_cap',
+    ]),
+    'password_present' => $default['password'] === 'cloud-password-placeholder',
+    'validated_default_algorithm' => $connector->validatedBackoffAlgorithm($default['backoff_algorithm']),
+    'validated_cache_algorithm' => $connector->validatedBackoffAlgorithm($cache['backoff_algorithm']),
+], JSON_THROW_ON_ERROR);
+PHP;
+    $process = new Process([PHP_BINARY, '-r', $script], base_path(), [
+        'APP_CONFIG_CACHE' => base_path('bootstrap/cache/cloud-redis-defaults-test.php'),
+        'APP_ENV' => 'testing',
+        'APP_NAME' => false,
+        'REDIS_CLIENT' => false,
+        'REDIS_URL' => false,
+        'REDIS_HOST' => 'cloud-redis.internal',
+        'REDIS_USERNAME' => false,
+        'REDIS_PASSWORD' => 'cloud-password-placeholder',
+        'REDIS_PORT' => '6380',
+        'REDIS_CLUSTER' => false,
+        'REDIS_PREFIX' => false,
+        'REDIS_PERSISTENT' => false,
+        'REDIS_DB' => false,
+        'REDIS_CACHE_DB' => false,
+        'REDIS_MAX_RETRIES' => false,
+        'REDIS_BACKOFF_ALGORITHM' => false,
+        'REDIS_BACKOFF_BASE' => false,
+        'REDIS_BACKOFF_CAP' => false,
+    ]);
+    $process->mustRun();
+
+    return json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+}
+
 it('serves the management endpoint when Cloud does not inject a Redis client selector', function (): void {
     $process = requestCloudMetadataWithoutRedisClient();
     $process->mustRun();
 
     expect(trim($process->getOutput()))->toBe('200');
+});
+
+it('boots phpredis configuration from the connection values Cloud injects', function (): void {
+    $resolved = validatedCloudRedisConfig();
+    $connectionDefaults = [
+        'host' => 'cloud-redis.internal',
+        'port' => '6380',
+        'database' => '0',
+        'max_retries' => 3,
+        'backoff_algorithm' => 'decorrelated_jitter',
+        'backoff_base' => 100,
+        'backoff_cap' => 1000,
+    ];
+
+    expect($resolved['client'])->toBe('phpredis')
+        ->and($resolved['options'])->toMatchArray([
+            'cluster' => 'redis',
+            'persistent' => false,
+        ])->and($resolved['default'])->toBe($connectionDefaults)
+        ->and($resolved['cache'])->toBe(array_replace($connectionDefaults, ['database' => '1']))
+        ->and($resolved['password_present'])->toBeTrue()
+        ->and($resolved['validated_default_algorithm'])->toBe(Redis::BACKOFF_ALGORITHM_DECORRELATED_JITTER)
+        ->and($resolved['validated_cache_algorithm'])->toBe(Redis::BACKOFF_ALGORITHM_DECORRELATED_JITTER);
 });
 
 it('keeps the catalog manifest aligned with live application configuration and scheduler registration', function (): void {
@@ -214,35 +312,31 @@ it('keeps the catalog manifest aligned with live application configuration and s
         ->and($manifest['scheduler'])->toBe($registeredScheduler);
 });
 
-it('never deploys configuration that shadows Cloud managed resource values', function (): void {
-    $managedConfig = [
-        'database.default',
-        'queue.default',
-        'filesystems.default',
-        'cache.default',
-    ];
+it('uses Laravel defaults without overriding Cloud managed resource values', function (): void {
     $resolved = resolvedCloudConfig();
-    $resolvedWithInjectedSession = resolvedCloudConfig('redis');
+    $resolvedWithCloudValues = resolvedCloudConfig([
+        'DB_CONNECTION' => 'pgsql',
+        'QUEUE_CONNECTION' => 'cloud',
+        'FILESYSTEM_DISK' => 's3',
+        'CACHE_STORE' => 'redis',
+        'SESSION_DRIVER' => 'redis',
+    ]);
 
-    expect($resolved)->toHaveKeys([...$managedConfig, 'session.driver'])
-        ->and($resolved['session.driver'])->toBe('cookie')
-        ->and($resolvedWithInjectedSession['session.driver'])->toBe('redis')
-        ->and($resolved['database.redis.client'])->toBe('phpredis');
-
-    foreach ($managedConfig as $key) {
-        expect($resolved[$key])->toBeNull("Cloud-managed config key {$key} resolves to an application-set value");
-    }
-
-    $managedVariable = '(?:DB_[A-Z0-9_]+|QUEUE_CONNECTION|CACHE_STORE|FILESYSTEM_DISK|AWS_[A-Z0-9_]+|SQS_[A-Z0-9_]+|REDIS_(?!CLIENT\b)[A-Z0-9_]+)';
-
-    foreach (glob(base_path('config/*.php')) ?: [] as $path) {
-        $contents = file_get_contents($path);
-        preg_match_all("/env\\(\\s*['\"](?<variable>{$managedVariable})['\"]\\s*,/", $contents, $matches);
-
-        foreach ($matches['variable'] as $variable) {
-            expect($variable)->toBeNull("Cloud-managed variable {$variable} has a fallback in {$path}");
-        }
-    }
+    expect($resolved)->toMatchArray([
+        'database.default' => 'sqlite',
+        'database.redis.client' => 'phpredis',
+        'queue.default' => 'database',
+        'filesystems.default' => 'local',
+        'cache.default' => 'database',
+        'session.driver' => 'cookie',
+    ])->and($resolvedWithCloudValues)->toMatchArray([
+        'database.default' => 'pgsql',
+        'database.redis.client' => 'phpredis',
+        'queue.default' => 'cloud',
+        'filesystems.default' => 's3',
+        'cache.default' => 'redis',
+        'session.driver' => 'redis',
+    ]);
 
     $runtimeKey = '(?:database|queue|cache|filesystems)\.[A-Za-z0-9_.-]+|session\.driver';
 
