@@ -83,7 +83,7 @@ final class SessionsTool extends Tool
 
     public function handle(Request $request): ResponseFactory
     {
-        $principal = app(ActingPrincipalResolver::class)->require(request());
+        $principal = resolve(ActingPrincipalResolver::class)->require(request());
 
         McpInput::closed($request, [
             'application', 'started_from', 'started_to', 'ended_from', 'ended_to',

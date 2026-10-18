@@ -61,7 +61,7 @@ final class SessionDeepLinkTool extends Tool
 
     public function handle(Request $request, ReplayPlayerLink $link): ResponseFactory
     {
-        app(ActingPrincipalResolver::class)->require(request());
+        resolve(ActingPrincipalResolver::class)->require(request());
 
         McpInput::closed($request, ['application', 'session_id', 'start']);
         $applicationId = McpInput::requiredString($request, 'application', 64);

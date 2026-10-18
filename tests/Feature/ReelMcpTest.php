@@ -555,7 +555,7 @@ it('refuses an inactive delegated subject readably before application work', fun
     $application = Application::factory()->create();
     $queries = [];
     DB::listen(function ($query) use (&$queries): void {
-        if (preg_match('/\b(applications|recording_sessions|replay_views)\b/', strtolower($query->sql)) === 1) {
+        if (preg_match('/\b(applications|recording_sessions|replay_views)\b/', strtolower((string) $query->sql)) === 1) {
             $queries[] = $query->sql;
         }
     });

@@ -67,7 +67,7 @@ final class SessionContentTool extends Tool
 
     public function handle(Request $request, ReplayPayloadReader $reader): ResponseFactory
     {
-        app(ActingPrincipalResolver::class)->require(request());
+        resolve(ActingPrincipalResolver::class)->require(request());
 
         McpInput::closed($request, ['application', 'session_id', 'types', 'cursor', 'limit']);
         $applicationId = McpInput::requiredString($request, 'application', 64);
