@@ -10,7 +10,8 @@ use App\Mcp\Support\McpResponse;
 use App\Mcp\Support\OpaqueCursor;
 use App\Models\Application;
 use App\Models\RecordingSession;
-use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipal;
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolEffect;
 use ArtisanBuild\BuiltForCloud\Mcp\Classification;
@@ -82,6 +83,8 @@ final class SessionsTool extends Tool
 
     public function handle(Request $request): ResponseFactory
     {
+        $principal = resolve(ActingPrincipalResolver::class)->require(request());
+
         McpInput::closed($request, [
             'application', 'started_from', 'started_to', 'ended_from', 'ended_to',
             'duration_min', 'duration_max', 'path', 'session_id', 'user_id', 'release',
@@ -100,7 +103,7 @@ final class SessionsTool extends Tool
         }
 
         $query = $application->recordingSessions()->with('application');
-        $this->applyFilters($query, $filters, $request);
+        $this->applyFilters($query, $filters, $principal);
 
         if ($cursor !== []) {
             $startedAt = $cursor['started_at'] ?? null;
@@ -196,7 +199,7 @@ final class SessionsTool extends Tool
      * @param  Builder<RecordingSession>|HasMany<RecordingSession, Application>  $query
      * @param  array<string, int|string|null>  $filters
      */
-    private function applyFilters(Builder|HasMany $query, array $filters, Request $request): void
+    private function applyFilters(Builder|HasMany $query, array $filters, ActingPrincipal $principal): void
     {
         foreach ([
             ['started_at', '>=', 'started_from'], ['started_at', '<=', 'started_to'],
@@ -228,8 +231,10 @@ final class SessionsTool extends Tool
         }
 
         if ($filters['watched'] !== null) {
-            $principal = $request->user();
-            $actorId = $principal instanceof DelegatedActor ? $principal->getAuthIdentifier() : null;
+            $identifier = $principal->identifier();
+            $actorId = $principal->delegated && (is_int($identifier) || is_string($identifier))
+                ? (string) $identifier
+                : null;
 
             if ($actorId === null) {
                 if ($filters['watched'] === 'yes') {
