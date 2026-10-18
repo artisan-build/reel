@@ -1,7 +1,10 @@
 <?php
 
+use App\Enums\RecordingSessionStatus;
 use App\Models\Application;
+use App\Models\RecordingSession;
 use App\Services\ReelCredentialScope;
+use App\Services\ReplayManifest;
 use ArtisanBuild\BuiltForCloud\Actions\CompleteAsymmetricEnrollment;
 use ArtisanBuild\BuiltForCloud\Actions\MintCredential;
 use ArtisanBuild\BuiltForCloud\AuditActor;
@@ -14,7 +17,9 @@ use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
 use ArtisanBuild\BuiltForCloud\MintOptions;
 use ArtisanBuild\BuiltForCloud\Rs256PublicKey;
 use ArtisanBuild\BuiltForCloud\User as BuiltForCloudUser;
+use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /*
@@ -124,6 +129,80 @@ function activeReelCredential(Application $application, ?array $keyPair = null):
     );
 
     return $pending['credential']->refresh();
+}
+
+/** @param list<array<string, mixed>> $events @param array<string, mixed> $attributes */
+function makeMcpRecordingSession(Application $application, Credential $credential, array $events = [], array $attributes = []): RecordingSession
+{
+    $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
+    $manifest = null;
+    $manifestChecksum = null;
+    $compressedBytes = 0;
+
+    if ($events !== []) {
+        $encoded = json_encode($events, JSON_THROW_ON_ERROR)."\n";
+        $compressed = gzencode($encoded);
+        expect($compressed)->toBeString();
+        $key = "reel/chunks/{$application->public_id}/{$sessionId}/replay.jsonl.gz";
+        Storage::disk('local')->put($key, $compressed);
+        $manifest = [
+            'manifest_version' => 1,
+            'envelope_version' => Envelope::VERSION,
+            'rrweb_version' => Envelope::RRWEB_VERSION,
+            'compression' => Envelope::COMPRESSION,
+            'objects' => [[
+                'key' => $key,
+                'checksum' => hash('sha256', $compressed),
+                'bytes' => strlen($compressed),
+            ]],
+            'event_started_at' => 1_000,
+            'event_ended_at' => 1_000 + count($events),
+            'epoch_count' => 1,
+            'chunk_count' => 1,
+            'gap_count' => 0,
+            'incomplete' => false,
+            'incomplete_reasons' => [],
+            'compaction_state' => 'ready',
+        ];
+        $manifestChecksum = resolve(ReplayManifest::class)->checksum($manifest);
+        $compressedBytes = strlen($compressed);
+    }
+
+    $session = new RecordingSession;
+    $session->fill(array_merge([
+        'application_id' => $application->getKey(),
+        'application_credential_id' => $credential->getKey(),
+        'session_id' => $sessionId,
+        'grant_id_hash' => hash('sha256', $sessionId),
+        'origin' => 'https://monitored.example',
+        'protocol_version' => Envelope::VERSION,
+        'max_chunks' => 500,
+        'max_compressed_bytes' => 10_000_000,
+        'max_chunk_bytes' => 1_000_000,
+        'chunk_count' => $events === [] ? 0 : 1,
+        'compressed_bytes' => $compressedBytes,
+        'epoch_count' => 1,
+        'started_at' => now(),
+        'max_event_time' => now()->addHour(),
+        'upload_cutoff_at' => now()->addHour(),
+        'ended_at' => now()->addMinute(),
+        'maximum_expires_at' => now()->addDays(30),
+        'status_changed_at' => now(),
+        'is_complete' => true,
+        'incomplete_reasons' => [],
+        'gap_count' => 0,
+        'duration_seconds' => 60,
+        'initial_path' => '/start',
+        'latest_path' => '/finish',
+    ], $attributes));
+    $session->forceFill([
+        'status' => RecordingSessionStatus::Ready,
+        'manifest' => $manifest,
+        'manifest_checksum' => $manifestChecksum,
+        'compacted_at' => $manifest === null ? null : now(),
+    ])->save();
+
+    return $session->fresh(['application']);
 }
 
 function testIdentity(BuiltForCloudUser $user, ?string $actorId = null): DomainIdentityContext
