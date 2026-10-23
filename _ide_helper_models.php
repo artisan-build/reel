@@ -200,8 +200,7 @@ namespace App\Models{
 /**
  * @property int $id
  * @property int $recording_session_id
- * @property int|null $actor_user_id
- * @property string $actor_name
+ * @property string|null $actor_id
  * @property string $action
  * @property \Carbon\CarbonImmutable $occurred_at
  * @property-read \App\Models\RecordingSession $recordingSession
@@ -209,8 +208,7 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent query()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereAction($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorName($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorUserId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereOccurredAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereRecordingSessionId($value)
@@ -224,7 +222,7 @@ namespace App\Models{
 /**
  * @property int $id
  * @property int $application_id
- * @property int $application_credential_id
+ * @property string $application_credential_id
  * @property string $session_id
  * @property string $grant_id_hash
  * @property string $origin
@@ -270,13 +268,13 @@ namespace App\Models{
  * @property string|null $release_id
  * @property int|null $duration_seconds
  * @property \Carbon\CarbonImmutable|null $protected_at
- * @property int|null $protected_by
+ * @property string|null $protected_by
  * @property \Carbon\CarbonImmutable|null $expires_at
  * @property \Carbon\CarbonImmutable|null $delete_not_before
  * @property \Carbon\CarbonImmutable|null $unprotected_at
  * @property \Carbon\CarbonImmutable|null $deletion_started_at
  * @property \Carbon\CarbonImmutable|null $deletion_completed_at
- * @property int|null $deletion_actor_id
+ * @property string|null $deletion_actor_id
  * @property string|null $deletion_reason
  * @property int $deletion_attempts
  * @property string|null $deletion_last_error
@@ -397,7 +395,7 @@ namespace App\Models{
 namespace App\Models{
 /**
  * @property int $id
- * @property int $user_id
+ * @property string $actor_id
  * @property int $application_id
  * @property int $recording_session_id
  * @property \Carbon\CarbonImmutable $viewed_at
@@ -408,12 +406,12 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereActorId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereApplicationId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereCreatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereRecordingSessionId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereUpdatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereUserId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereViewedAt($value)
  * @mixin \Eloquent
  */
@@ -425,8 +423,7 @@ namespace App\Models{
 /**
  * @property int $id
  * @property string $batch_id
- * @property int $actor_user_id
- * @property string $actor_name
+ * @property string $actor_id
  * @property int $application_id
  * @property \Carbon\CarbonImmutable $requested_at
  * @property \Carbon\CarbonImmutable|null $completed_at
@@ -438,8 +435,7 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorName($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorUserId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereApplicationId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereBatchId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereCompletedAt($value)
