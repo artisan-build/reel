@@ -101,8 +101,9 @@
             "@php packages/reel-client/vendor/bin/pest --configuration=packages/reel-client/phpunit.xml"
         ],
         "ide-helper": [
+            "@php artisan migrate --env=ide-helper --force",
             "@php artisan ide-helper:generate",
-            "@php artisan ide-helper:models --write-mixin --no-interaction",
+            "@php artisan ide-helper:models --env=ide-helper --write-mixin --no-interaction",
             "@php artisan ide-helper:meta"
         ],
         "ready": [
