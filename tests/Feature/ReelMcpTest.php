@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Enums\RecordingSessionStatus;
 use App\Mcp\ReelMcpServer;
 use App\Mcp\Tools\SessionContentTool;
 use App\Mcp\Tools\SessionDeepLinkTool;
@@ -10,10 +9,11 @@ use App\Mcp\Tools\SessionsTool;
 use App\Models\Application;
 use App\Models\RecordingSession;
 use App\Models\ReplayView;
-use App\Services\ReplayManifest;
 use App\Services\ReplayPayloadReader;
+use ArtisanBuild\BuiltForCloud\Console\ConsoleKeyring;
 use ArtisanBuild\BuiltForCloud\Console\ConsoleRole;
 use ArtisanBuild\BuiltForCloud\Console\DelegatedActor;
+use ArtisanBuild\BuiltForCloud\Console\RequestAssertion;
 use ArtisanBuild\BuiltForCloud\Credential;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\Http\Middleware\AuthenticateMcp;
@@ -24,92 +24,23 @@ use ArtisanBuild\BuiltForCloud\Mcp\ToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\ToolEffect;
 use ArtisanBuild\BuiltForCloud\OperatorAbility;
 use ArtisanBuild\BuiltForCloud\SubjectType;
-use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedTools;
+use ArtisanBuild\BuiltForCloud\Testing\McpDelegatedAssertionFixture;
 use ArtisanBuild\BuiltForCloud\Testing\McpProductAdmission;
 use ArtisanBuild\BuiltForCloud\Testing\WithCredentials;
-use ArtisanBuild\ReelClient\Envelope;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Mcp\Server\Testing\TestResponse;
+use ParagonIE\Paseto\Builder;
+use ParagonIE\Paseto\Keys\Version4\AsymmetricSecretKey;
+use ParagonIE\Paseto\Protocol\Version4;
+use ParagonIE\Paseto\Purpose;
 use Tests\Support\User;
 
 uses(WithCredentials::class);
-
-/** @param list<array<string, mixed>> $events @param array<string, mixed> $attributes */
-function makeMcpRecordingSession(Application $application, Credential $credential, array $events = [], array $attributes = []): RecordingSession
-{
-    $sessionId = $attributes['session_id'] ?? bin2hex(random_bytes(32));
-    $manifest = null;
-    $manifestChecksum = null;
-    $compressedBytes = 0;
-
-    if ($events !== []) {
-        $encoded = json_encode($events, JSON_THROW_ON_ERROR)."\n";
-        $compressed = gzencode($encoded);
-        expect($compressed)->toBeString();
-        $key = "reel/chunks/{$application->public_id}/{$sessionId}/replay.jsonl.gz";
-        Storage::disk('local')->put($key, $compressed);
-        $manifest = [
-            'manifest_version' => 1,
-            'envelope_version' => Envelope::VERSION,
-            'rrweb_version' => Envelope::RRWEB_VERSION,
-            'compression' => Envelope::COMPRESSION,
-            'objects' => [[
-                'key' => $key,
-                'checksum' => hash('sha256', $compressed),
-                'bytes' => strlen($compressed),
-            ]],
-            'event_started_at' => 1_000,
-            'event_ended_at' => 1_000 + count($events),
-            'epoch_count' => 1,
-            'chunk_count' => 1,
-            'gap_count' => 0,
-            'incomplete' => false,
-            'incomplete_reasons' => [],
-            'compaction_state' => 'ready',
-        ];
-        $manifestChecksum = resolve(ReplayManifest::class)->checksum($manifest);
-        $compressedBytes = strlen($compressed);
-    }
-
-    $session = new RecordingSession;
-    $session->fill(array_merge([
-        'application_id' => $application->getKey(),
-        'application_credential_id' => $credential->getKey(),
-        'session_id' => $sessionId,
-        'grant_id_hash' => hash('sha256', $sessionId),
-        'origin' => 'https://monitored.example',
-        'protocol_version' => Envelope::VERSION,
-        'max_chunks' => 500,
-        'max_compressed_bytes' => 10_000_000,
-        'max_chunk_bytes' => 1_000_000,
-        'chunk_count' => $events === [] ? 0 : 1,
-        'compressed_bytes' => $compressedBytes,
-        'epoch_count' => 1,
-        'started_at' => now(),
-        'max_event_time' => now()->addHour(),
-        'upload_cutoff_at' => now()->addHour(),
-        'ended_at' => now()->addMinute(),
-        'maximum_expires_at' => now()->addDays(30),
-        'status_changed_at' => now(),
-        'is_complete' => true,
-        'incomplete_reasons' => [],
-        'gap_count' => 0,
-        'duration_seconds' => 60,
-        'initial_path' => '/start',
-        'latest_path' => '/finish',
-    ], $attributes));
-    $session->forceFill([
-        'status' => RecordingSessionStatus::Ready,
-        'manifest' => $manifest,
-        'manifest_checksum' => $manifestChecksum,
-        'compacted_at' => $manifest === null ? null : now(),
-    ])->save();
-
-    return $session->fresh(['application']);
-}
 
 /** @return array<string, mixed> */
 function reelMcpPayload(TestResponse $response): array
@@ -131,14 +62,54 @@ function maximumMcpRequestId(): string
     return $id;
 }
 
+function reelDelegatedKey(string $keyId): AsymmetricSecretKey
+{
+    $secret = AsymmetricSecretKey::generate(new Version4);
+    $keyring = new ConsoleKeyring;
+    $keyring->add($keyId, $secret->getPublicKey()->toHexString());
+    $keyring->activate($keyId);
+
+    return $secret;
+}
+
+function reelDelegatedAssertion(AsymmetricSecretKey $secret, string $keyId, string $subject): string
+{
+    $now = CarbonImmutable::now('UTC');
+
+    return (new Builder)
+        ->setVersion(new Version4)
+        ->setPurpose(Purpose::public())
+        ->setKey($secret)
+        ->setClaims([
+            'iss' => 'https://console.reel.test',
+            'sub' => $subject,
+            'aud' => 'https://reel.test',
+            'iat' => $now->toAtomString(),
+            'nbf' => $now->toAtomString(),
+            'exp' => $now->addSeconds(90)->toAtomString(),
+            'jti' => 'reel_'.bin2hex(random_bytes(8)),
+            'display_name' => 'Reel Test Operator',
+            'role' => ConsoleRole::Member->value,
+            'purpose' => 'mcp',
+        ])
+        ->setFooterArray(['kid' => $keyId])
+        ->toString();
+}
+
 beforeEach(function (): void {
     RequestEffectCeiling::publish(resolve('request'), Effect::Read->value);
     Storage::fake('local');
     config()->set('filesystems.default', 'local');
+    Auth::setUser($this->mintCredential([
+        'purpose' => CredentialPurpose::Mcp,
+        'subject_type' => SubjectType::Installation,
+        'subject_ref' => 'reel-mcp-direct-tool-test',
+        'abilities' => [OperatorAbility::McpRead->value],
+    ])->credential);
+    resolve('request')->setUserResolver(static fn () => Auth::user());
 });
 
 it('mounts and advertises exactly one delegated effect-scoped read door', function (): void {
-    McpDelegatedTools::assertConforms(ReelMcpServer::class);
     McpProductAdmission::assert();
 
     $metadata = $this->getJson('/bfc/meta')->assertOk();
@@ -542,20 +513,15 @@ it('pages privacy-validated replay content and never serializes rejected private
 it('uses the type-qualified delegated actor id for watched-session filtering', function (): void {
     $application = Application::factory()->create();
     $session = makeMcpRecordingSession($application, activeReelCredential($application));
-    $actor = DelegatedActor::query()->create([
-        'identity_hash' => DelegatedActor::identityHash('https://scalpels.test', 'operator-7'),
-        'issuer' => 'https://scalpels.test',
-        'subject' => 'operator-7',
-        'last_handoff_display_name' => 'Operator Seven',
-        'last_handoff_role' => ConsoleRole::Admin,
-    ]);
+    $assertion = McpDelegatedAssertionFixture::verified(ConsoleRole::Admin);
+    $actor = DelegatedActor::recordHandoff($assertion);
+    RequestAssertion::publish(request(), $actor, $assertion);
     ReplayView::query()->create([
         'actor_id' => $actor->getAuthIdentifier(),
         'application_id' => $application->getKey(),
         'recording_session_id' => $session->getKey(),
         'viewed_at' => now(),
     ]);
-    Auth::setUser($actor);
 
     $payload = reelMcpPayload(ReelMcpServer::tool(SessionsTool::class, [
         'application' => $application->public_id,
@@ -565,6 +531,78 @@ it('uses the type-qualified delegated actor id for watched-session filtering', f
     expect($actor->getAuthIdentifier())->toStartWith('bfc-console:')
         ->and($payload['sessions'])->toHaveCount(1)
         ->and($payload['sessions'][0]['session_id'])->toBe($session->session_id);
+});
+
+it('refuses an inactive delegated subject readably before application work', function (): void {
+    config([
+        'built-for-cloud.console.issuer' => 'https://console.reel.test',
+        'built-for-cloud.console.audience' => 'https://reel.test',
+    ]);
+    $keyId = 'reel-test-'.bin2hex(random_bytes(4));
+    $secret = reelDelegatedKey($keyId);
+    $subject = 'inactive-operator';
+    $headers = static fn (string $token): array => [
+        'Authorization' => 'Bearer '.$token,
+        'Accept' => 'application/json, text/event-stream',
+    ];
+
+    $this->postJson('/mcp', [
+        'jsonrpc' => '2.0', 'id' => 'prime-actor', 'method' => 'tools/list', 'params' => [],
+    ], $headers(reelDelegatedAssertion($secret, $keyId, $subject)))->assertOk();
+
+    $actor = DelegatedActor::query()->where('subject', $subject)->sole();
+    $actor->forceFill(['deactivated_at' => now()])->save();
+    $application = Application::factory()->create();
+    $queries = [];
+    DB::listen(function ($query) use (&$queries): void {
+        if (preg_match('/\b(applications|recording_sessions|replay_views)\b/', strtolower((string) $query->sql)) === 1) {
+            $queries[] = $query->sql;
+        }
+    });
+
+    $this->postJson('/mcp', [
+        'jsonrpc' => '2.0', 'id' => 'inactive-actor', 'method' => 'tools/call',
+        'params' => ['name' => 'sessions', 'arguments' => [
+            'application' => $application->public_id,
+        ]],
+    ], $headers(reelDelegatedAssertion($secret, $keyId, $subject)))
+        ->assertUnauthorized()
+        ->assertExactJson(['message' => 'Unauthenticated.']);
+
+    expect($queries)->toBe([]);
+});
+
+it('never aliases a delegated numeric actor id to a local user or store credential identity', function (): void {
+    $application = Application::factory()->create();
+    $session = makeMcpRecordingSession($application, activeReelCredential($application));
+    $assertion = McpDelegatedAssertionFixture::verified(ConsoleRole::Member);
+    $actor = DelegatedActor::recordHandoff($assertion);
+    RequestAssertion::publish(request(), $actor, $assertion);
+    $localUser = User::factory()->create(['id' => $actor->getKey()]);
+    $credential = Credential::query()->firstOrFail();
+    ReplayView::query()->create([
+        'actor_id' => (string) $actor->getKey(),
+        'application_id' => $application->getKey(),
+        'recording_session_id' => $session->getKey(),
+        'viewed_at' => now(),
+    ]);
+
+    $watched = reelMcpPayload(ReelMcpServer::tool(SessionsTool::class, [
+        'application' => $application->public_id,
+        'watched' => 'yes',
+    ])->assertOk());
+    $unwatched = reelMcpPayload(ReelMcpServer::tool(SessionsTool::class, [
+        'application' => $application->public_id,
+        'watched' => 'no',
+    ])->assertOk());
+
+    expect($actor->getKey())->toBe($localUser->getKey())
+        ->and($actor->getAuthIdentifier())->toBe('bfc-console:'.$actor->getKey())
+        ->and($actor->getAuthIdentifier())->not->toBe((string) $localUser->getKey())
+        ->and($actor->getAuthIdentifier())->not->toBe((string) $credential->getKey())
+        ->and($watched['sessions'])->toBeEmpty()
+        ->and($unwatched['sessions'])->toHaveCount(1)
+        ->and($unwatched['sessions'][0]['session_id'])->toBe($session->session_id);
 });
 
 it('never compares a store credential key to human replay-view actor ids', function (): void {
@@ -652,6 +690,7 @@ it('returns the existing replay link below the relay cap with a maximum legal re
         ->and($payload['url'])->not->toContain('grant')
         ->and($payload['url'])->not->toContain('private_key');
 
+    Auth::forgetGuards();
     $this->get($payload['url'])->assertRedirect(route('bfc.login'));
     $this->actingAs(User::factory()->create())
         ->get($payload['url'])
