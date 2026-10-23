@@ -666,7 +666,13 @@ it('rejects every unusable credential lifecycle state before ingest mutation', f
         if ($state === 'revoked') {
             resolve(RevokeCredential::class)($credential->id);
         } elseif ($state === 'expired') {
-            $this->travel(61)->seconds();
+            // Backdate the row instead of travel()-ing forward: a forwarded clock puts the freshly
+            // minted grant in the future for the JWT verifier's system clock, which would refuse the
+            // grant before the credential-expiry filter under test is ever consulted.
+            DB::table('credentials')->where('id', $credential->id)->update([
+                'expires_at' => now()->subSecond(),
+            ]);
+            $credential->refresh();
         } else {
             DB::table('credentials')->where('id', $credential->id)->update([
                 'public_key' => $key['public']."\n",
