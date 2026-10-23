@@ -13,26 +13,7 @@
 
 namespace App\Models{
 /**
- * @property int $id
- * @property string $public_id
- * @property string $name
- * @property array<array-key, mixed> $allowed_origins
  * @property \App\Enums\CaptureSeverity $severity
- * @property array<array-key, mixed> $mask_selectors
- * @property array<array-key, mixed> $block_selectors
- * @property array<array-key, mixed> $excluded_paths
- * @property int $sampling_percent
- * @property bool $ingest_enabled
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property int $max_new_sessions_per_day
- * @property int $max_concurrent_sessions
- * @property int $max_chunks_per_session
- * @property int $max_compressed_bytes_per_session
- * @property int $max_compressed_chunk_bytes
- * @property int $max_daily_chunks
- * @property int $max_daily_compressed_bytes
- * @property int $max_ingest_requests_per_minute
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingMarker> $recordingMarkers
  * @property-read int|null $recording_markers_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingSession> $recordingSessions
@@ -43,26 +24,6 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Application query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereAllowedOrigins($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereBlockSelectors($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereExcludedPaths($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereIngestEnabled($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaskSelectors($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxChunksPerSession($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxCompressedBytesPerSession($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxCompressedChunkBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxConcurrentSessions($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxDailyChunks($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxDailyCompressedBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxIngestRequestsPerMinute($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereMaxNewSessionsPerDay($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereName($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application wherePublicId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereSamplingPercent($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereSeverity($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Application whereUpdatedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -71,38 +32,10 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $application_id
- * @property int $recording_session_id
- * @property string $epoch_id
- * @property int $sequence
- * @property string $checksum
- * @property int $compressed_bytes
- * @property int $decompressed_bytes
- * @property int $event_started_at
- * @property int $event_ended_at
- * @property string $object_key
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property \Carbon\CarbonImmutable|null $purged_at
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereChecksum($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereCompressedBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereDecompressedBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereEpochId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereEventEndedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereEventStartedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereObjectKey($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk wherePurgedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereRecordingSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereSequence($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingChunk whereUpdatedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -111,30 +44,13 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $recording_session_id
- * @property string $epoch_id
  * @property \App\Enums\RecordingEpochStatus $status
- * @property string|null $failure_code
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property int|null $terminal_sequence
- * @property int $ordinal Server-assigned first-seen order
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingEpochTransition> $transitions
  * @property-read int|null $transitions_count
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereEpochId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereFailureCode($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereOrdinal($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereRecordingSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereStatus($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereTerminalSequence($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpoch whereUpdatedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -143,24 +59,10 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $recording_epoch_id
- * @property string|null $previous_state
- * @property string $new_state
- * @property string $reason
- * @property int $attempt
- * @property \Carbon\CarbonImmutable $transitioned_at
- * @property-read \App\Models\RecordingEpoch $recordingEpoch
+ * @property-read \App\Models\RecordingEpoch|null $recordingEpoch
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereAttempt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereNewState($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition wherePreviousState($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereReason($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereRecordingEpochId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingEpochTransition whereTransitionedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -169,27 +71,11 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $application_id
- * @property int $recording_session_id
- * @property string $marker_type
- * @property int $occurred_at
- * @property array<array-key, mixed> $metadata
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property-read \App\Models\Application $application
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\Application|null $application
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereMarkerType($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereMetadata($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereOccurredAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereRecordingSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingMarker whereUpdatedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -198,20 +84,10 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $recording_session_id
- * @property string|null $actor_id
- * @property string $action
- * @property \Carbon\CarbonImmutable $occurred_at
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereAction($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereActorId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereOccurredAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingProtectionEvent whereRecordingSessionId($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -220,69 +96,8 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $application_id
- * @property string $application_credential_id
- * @property string $session_id
- * @property string $grant_id_hash
- * @property string $origin
  * @property \App\Enums\RecordingSessionStatus $status
- * @property int $protocol_version
- * @property int $max_chunks
- * @property int $max_compressed_bytes
- * @property int $max_chunk_bytes
- * @property int $chunk_count
- * @property int $compressed_bytes
- * @property int $conflicting_retry_count
- * @property int $epoch_count
- * @property \Carbon\CarbonImmutable $started_at
- * @property \Carbon\CarbonImmutable $max_event_time
- * @property \Carbon\CarbonImmutable $upload_cutoff_at
- * @property \Carbon\CarbonImmutable|null $closing_at
- * @property string|null $failure_code
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property \Carbon\CarbonImmutable|null $ended_at
- * @property \Carbon\CarbonImmutable|null $closing_cutoff_at
- * @property \Carbon\CarbonImmutable|null $maximum_expires_at
- * @property \Carbon\CarbonImmutable|null $status_changed_at
- * @property bool|null $is_complete
- * @property array<array-key, mixed> $incomplete_reasons
- * @property int $gap_count
- * @property int $max_reorder_distance
- * @property int $concurrent_epoch_count
- * @property array<array-key, mixed>|null $manifest
- * @property string|null $manifest_checksum
- * @property \Carbon\CarbonImmutable|null $compacted_at
- * @property int $compaction_attempts
- * @property int $compaction_duration_ms
- * @property int $compaction_noop_count
- * @property int $candidate_checksum_failure_count
- * @property int $manifest_checksum_failure_count
- * @property int $compaction_peak_memory_bytes
- * @property string|null $initial_path
- * @property string|null $latest_path
- * @property int|null $initial_path_recorded_at
- * @property int|null $latest_path_recorded_at
- * @property string|null $application_user_id
- * @property string|null $release_id
- * @property int|null $duration_seconds
- * @property \Carbon\CarbonImmutable|null $protected_at
- * @property string|null $protected_by
- * @property \Carbon\CarbonImmutable|null $expires_at
- * @property \Carbon\CarbonImmutable|null $delete_not_before
- * @property \Carbon\CarbonImmutable|null $unprotected_at
- * @property \Carbon\CarbonImmutable|null $deletion_started_at
- * @property \Carbon\CarbonImmutable|null $deletion_completed_at
- * @property string|null $deletion_actor_id
- * @property string|null $deletion_reason
- * @property int $deletion_attempts
- * @property string|null $deletion_last_error
- * @property int $deletion_remaining_objects
- * @property string|null $erasure_batch_id
- * @property \Carbon\CarbonImmutable|null $retention_skipped_at
- * @property string|null $retention_skip_reason
- * @property-read \App\Models\Application $application
+ * @property-read \App\Models\Application|null $application
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingChunk> $chunks
  * @property-read int|null $chunks_count
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RecordingEpoch> $epochs
@@ -298,68 +113,6 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereApplicationCredentialId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereApplicationUserId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCandidateChecksumFailureCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereChunkCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereClosingAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereClosingCutoffAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompactedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompactionAttempts($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompactionDurationMs($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompactionNoopCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompactionPeakMemoryBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCompressedBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereConcurrentEpochCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereConflictingRetryCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeleteNotBefore($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionActorId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionAttempts($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionCompletedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionLastError($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionReason($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionRemainingObjects($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDeletionStartedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereDurationSeconds($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEndedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereEpochCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereErasureBatchId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereExpiresAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereFailureCode($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereGapCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereGrantIdHash($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereIncompleteReasons($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereInitialPath($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereInitialPathRecordedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereIsComplete($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereLatestPath($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereLatestPathRecordedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereManifest($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereManifestChecksum($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereManifestChecksumFailureCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaxChunkBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaxChunks($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaxCompressedBytes($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaxEventTime($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaxReorderDistance($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereMaximumExpiresAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereOrigin($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtectedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtectedBy($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereProtocolVersion($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereReleaseId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkipReason($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereRetentionSkippedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStartedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStatus($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereStatusChangedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUnprotectedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUpdatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSession whereUploadCutoffAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -368,24 +121,10 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property int $recording_session_id
- * @property string|null $previous_state
- * @property string $new_state
- * @property string $reason
- * @property int $attempt
- * @property \Carbon\CarbonImmutable $transitioned_at
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereAttempt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereNewState($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition wherePreviousState($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereReason($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereRecordingSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|RecordingSessionTransition whereTransitionedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -394,25 +133,11 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property string $actor_id
- * @property int $application_id
- * @property int $recording_session_id
- * @property \Carbon\CarbonImmutable $viewed_at
- * @property \Carbon\CarbonImmutable|null $created_at
- * @property \Carbon\CarbonImmutable|null $updated_at
- * @property-read \App\Models\Application $application
- * @property-read \App\Models\RecordingSession $recordingSession
+ * @property-read \App\Models\Application|null $application
+ * @property-read \App\Models\RecordingSession|null $recordingSession
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereActorId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereRecordingSessionId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereUpdatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|ReplayView whereViewedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
@@ -421,30 +146,10 @@ namespace App\Models{
 
 namespace App\Models{
 /**
- * @property int $id
- * @property string $batch_id
- * @property string $actor_id
- * @property int $application_id
- * @property \Carbon\CarbonImmutable $requested_at
- * @property \Carbon\CarbonImmutable|null $completed_at
- * @property int $matched_count
- * @property int $deleted_count
- * @property int $failed_count
- * @property string $outcome
- * @property-read \App\Models\Application $application
+ * @property-read \App\Models\Application|null $application
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit query()
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereActorId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereApplicationId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereBatchId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereCompletedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereDeletedCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereFailedCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereId($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereMatchedCount($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereOutcome($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|UserErasureAudit whereRequestedAt($value)
  * @mixin \Eloquent
  */
 	#[\AllowDynamicProperties]
