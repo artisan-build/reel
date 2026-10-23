@@ -15,8 +15,8 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
-        "artisan-build/built-for-cloud": "^0.19.10",
-        "artisan-build/hone-client": "^1.6",
+        "artisan-build/built-for-cloud": "^0.20",
+        "artisan-build/hone-client": "^1.8.1",
         "artisan-build/reel-client": "*",
         "aws/aws-sdk-php": "^3.393",
         "laravel/chisel": "^0.1.0",

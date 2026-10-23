@@ -9,6 +9,7 @@ use App\Mcp\Support\McpInput;
 use App\Mcp\Support\McpResponse;
 use App\Models\Application;
 use App\Services\ReplayPlayerLink;
+use ArtisanBuild\BuiltForCloud\Console\ActingPrincipalResolver;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolClassification;
 use ArtisanBuild\BuiltForCloud\Mcp\AdvertisesToolEffect;
 use ArtisanBuild\BuiltForCloud\Mcp\Classification;
@@ -60,6 +61,8 @@ final class SessionDeepLinkTool extends Tool
 
     public function handle(Request $request, ReplayPlayerLink $link): ResponseFactory
     {
+        resolve(ActingPrincipalResolver::class)->require(request());
+
         McpInput::closed($request, ['application', 'session_id', 'start']);
         $applicationId = McpInput::requiredString($request, 'application', 64);
         $sessionId = McpInput::requiredString($request, 'session_id', 64, '/^[a-f0-9]{64}$/');
