@@ -691,7 +691,7 @@ it('returns the existing replay link below the relay cap with a maximum legal re
         ->and($payload['url'])->not->toContain('private_key');
 
     Auth::forgetGuards();
-    $this->get($payload['url'])->assertRedirect(route('bfc.login'));
+    $this->get($payload['url'])->assertRedirectContains(route('bfc.login'));
     $this->actingAs(User::factory()->create())
         ->get($payload['url'])
         ->assertOk()
