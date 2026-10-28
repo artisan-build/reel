@@ -16,11 +16,19 @@ class Origin implements ValidationRule
         }
 
         $parts = parse_url($value);
-        $path = $parts['path'] ?? '';
 
-        if ($parts === false
-            || ! in_array($parts['scheme'] ?? null, ['http', 'https'], true)
-            || ! isset($parts['host'])
+        if ($parts === false) {
+            $fail('The :attribute must be an HTTP or HTTPS origin without a path, query, or fragment.');
+
+            return;
+        }
+
+        $path = $parts['path'] ?? '';
+        $host = $parts['host'] ?? null;
+
+        if (! in_array($parts['scheme'] ?? null, ['http', 'https'], true)
+            || ! is_string($host)
+            || ! $this->validHost($host)
             || isset($parts['user'])
             || isset($parts['pass'])
             || isset($parts['query'])
@@ -29,5 +37,12 @@ class Origin implements ValidationRule
         ) {
             $fail('The :attribute must be an HTTP or HTTPS origin without a path, query, or fragment.');
         }
+    }
+
+    private function validHost(string $host): bool
+    {
+        return ! str_contains($host, '*')
+            && (filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false
+                || filter_var(trim($host, '[]'), FILTER_VALIDATE_IP) !== false);
     }
 }
