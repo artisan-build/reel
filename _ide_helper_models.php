@@ -71,6 +71,32 @@ namespace App\Models{
 
 namespace App\Models{
 /**
+ * @property string $id
+ * @property string $name
+ * @property int $application_id
+ * @property string|null $enrollment_code_ciphertext
+ * @property Carbon $enrollment_expires_at
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $updated_at
+ * @property-read \App\Models\Application $application
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereApplicationId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereEnrollmentCodeCiphertext($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereEnrollmentExpiresAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereName($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ApplicationProvisioningRequest whereUpdatedAt($value)
+ * @mixin \Eloquent
+ */
+	#[\AllowDynamicProperties]
+	final class IdeHelperApplicationProvisioningRequest {}
+}
+
+namespace App\Models{
+/**
  * @property int $id
  * @property int $application_id
  * @property int $recording_session_id

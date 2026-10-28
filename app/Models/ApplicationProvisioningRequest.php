@@ -15,6 +15,8 @@ use Illuminate\Support\Carbon;
  * @property int $application_id
  * @property string|null $enrollment_code_ciphertext
  * @property Carbon $enrollment_expires_at
+ *
+ * @mixin IdeHelperApplicationProvisioningRequest
  */
 final class ApplicationProvisioningRequest extends Model
 {
