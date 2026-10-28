@@ -191,7 +191,7 @@ it('serializes concurrent exact requests without duplicating domain rows', funct
             $application->delete();
         }
     }
-});
+})->skip(! function_exists('pcntl_fork'), 'pcntl is required for the concurrency test.');
 
 it('conflicts when a request id is reused with a different name', function (): void {
     $owner = applicationProvisioningOwner();
