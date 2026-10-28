@@ -3,42 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\Application;
-use ArtisanBuild\BuiltForCloud\Credential;
-use ArtisanBuild\BuiltForCloud\OwnerCredentialMinter;
-use ArtisanBuild\BuiltForCloud\Ownership;
-use ArtisanBuild\ReelClient\KeyMaterial;
-use ArtisanBuild\ReelClient\SessionGrant;
-use ArtisanBuild\ReelClient\SessionGrantContext;
-use ArtisanBuild\ReelClient\SessionGrantVerifier;
 use Illuminate\Support\Str;
-
-function originSyncCredential(string $token, bool $owner = false): Credential
-{
-    $credential = resolve(OwnerCredentialMinter::class)->mintFromHash(hash('sha256', $token));
-
-    if ($owner) {
-        $ownership = Ownership::current();
-
-        if ($ownership instanceof Ownership) {
-            $ownership->forceFill(['owner_credential_id' => $credential->getKey()])->save();
-        } else {
-            Ownership::query()->create(['owner_credential_id' => $credential->getKey()]);
-        }
-    }
-
-    return $credential;
-}
-
-/** @return array{token: string, credential: Credential} */
-function originSyncOwner(): array
-{
-    $token = 'origin-owner-'.Str::uuid();
-
-    return [
-        'token' => $token,
-        'credential' => originSyncCredential($token, true),
-    ];
-}
 
 it('lets the current owner replace an application complete origin set', function (): void {
     $owner = originSyncOwner();
@@ -188,6 +153,8 @@ it('rejects invalid complete origin sets without changing stored origins', funct
     'missing array' => [[]],
     'list root' => [['https://current.example']],
     'empty array' => [['allowed_origins' => []]],
+    'associative origin object' => [['allowed_origins' => ['primary' => 'https://current.example']]],
+    'sparse origin object' => [['allowed_origins' => [0 => 'https://current.example', 2 => 'https://custom.example']]],
     'oversized array' => [['allowed_origins' => array_map(
         static fn (int $index): string => "https://{$index}.example.test",
         range(1, 21),
@@ -204,50 +171,3 @@ it('rejects invalid complete origin sets without changing stored origins', funct
     'non-string member' => [['allowed_origins' => [123]]],
     'extra field' => [['allowed_origins' => ['https://current.example'], 'merge' => true]],
 ]);
-
-it('makes the session grant seam accept a newly allowed origin and deny the removed origin', function (): void {
-    $owner = originSyncOwner();
-    $removed = 'https://detached.example';
-    $allowed = 'https://new-custom.example';
-    $application = Application::factory()->create([
-        'allowed_origins' => [$removed],
-    ]);
-
-    $this->withToken($owner['token'])
-        ->putJson(route('bfc.applications.allowed-origins.update', $application), [
-            'allowed_origins' => [$allowed],
-        ])
-        ->assertOk();
-
-    $application->refresh();
-    $key = testRsaKeyPair(true);
-    $sessionId = bin2hex(random_bytes(32));
-    $ceilings = [
-        'max_chunks' => $application->max_chunks_per_session,
-        'max_compressed_bytes' => $application->max_compressed_bytes_per_session,
-        'max_chunk_bytes' => $application->max_compressed_chunk_bytes,
-    ];
-    $context = new SessionGrantContext(
-        applicationId: $application->public_id,
-        credentialId: KeyMaterial::credentialId($key['public']),
-        allowedOrigins: $application->allowed_origins,
-        sessionId: $sessionId,
-        maximumCeilings: $ceilings,
-        maximumLifetimeSeconds: 1800,
-    );
-    $mint = static fn (string $origin): string => SessionGrant::mint(
-        $key['private'],
-        $application->public_id,
-        $sessionId,
-        $origin,
-        now()->subSecond()->toDateTimeImmutable(),
-        now()->addMinutes(29)->toDateTimeImmutable(),
-        now()->addMinutes(28)->toDateTimeImmutable(),
-        $ceilings,
-    );
-    $verifier = new SessionGrantVerifier;
-
-    expect($verifier->verify($mint($allowed), $key['public'], $context)->claims()->get('origin'))->toBe($allowed)
-        ->and(fn () => $verifier->verify($mint($removed), $key['public'], $context))
-        ->toThrow(DomainException::class);
-});

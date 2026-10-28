@@ -22,7 +22,7 @@ final class ReplaceApplicationAllowedOriginsController extends Controller
 
         $input = $request->all();
         $validator = Validator::make($input, [
-            'allowed_origins' => ['required', 'array', 'min:1', 'max:20'],
+            'allowed_origins' => ['required', 'array', 'list', 'min:1', 'max:20'],
             'allowed_origins.*' => ['distinct:strict', new Origin],
         ]);
 
