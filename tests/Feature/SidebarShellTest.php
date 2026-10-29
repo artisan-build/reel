@@ -80,8 +80,18 @@ it('places Reel navigation in the package sidebar and page content in main', fun
     'application settings' => ['admin.applications.show', 'admin.applications.index'],
 ]);
 
-it('contains the sessions table within the page on narrow screens', function (): void {
+it('keeps the sessions table legible on narrow screens', function (): void {
     $this->actingAs(User::factory()->create());
+
+    $emptyResponse = $this->get(route('sessions.index'))->assertOk();
+    $emptyDocument = new DOMDocument;
+    @$emptyDocument->loadHTML($emptyResponse->getContent());
+    $emptyXPath = new DOMXPath($emptyDocument);
+
+    expect($emptyXPath->query('//*[@data-testid="session-list"]//tbody/tr/td[@colspan="6"]'))->toHaveCount(1);
+
+    $application = Application::factory()->create();
+    makeMcpRecordingSession($application, activeReelCredential($application));
 
     $response = $this->get(route('sessions.index'))->assertOk();
     $document = new DOMDocument;
@@ -92,7 +102,20 @@ it('contains the sessions table within the page on narrow screens', function ():
     $responsiveTable = $sessionList.'/div['.$class('overflow-x-auto').']/table['
         .$class('w-full').' and '.$class('table-fixed').' and '
         .$class('sm:w-auto').' and '.$class('sm:min-w-full').' and '.$class('sm:table-auto').']';
+    $secondaryPositions = 'position() >= 2 and position() <= 4';
+    $secondaryHeaders = $responsiveTable.'/thead/tr/th['.$secondaryPositions.' and '.$class('hidden').' and '.$class('sm:table-cell').']';
+    $sessionRow = $responsiveTable.'/tbody/tr[td][1]';
+    $secondaryData = $sessionRow.'/td['.$secondaryPositions.' and '.$class('hidden').' and '.$class('sm:table-cell').']';
+    $primaryPositions = 'position() = 1 or position() = 5 or position() = 6';
+    $primaryHeaders = $responsiveTable.'/thead/tr/th[('.$primaryPositions.') and '.$class('px-2').' and '.$class('sm:px-4').']';
+    $primaryData = $sessionRow.'/td[('.$primaryPositions.') and '.$class('px-2').' and '.$class('sm:px-4').']';
+    $startedData = $sessionRow.'/td[1]['.$class('sm:whitespace-nowrap').']';
 
     expect($xpath->query($sessionList))->toHaveCount(1)
-        ->and($xpath->query($responsiveTable))->toHaveCount(1);
+        ->and($xpath->query($responsiveTable))->toHaveCount(1)
+        ->and($xpath->query($secondaryHeaders))->toHaveCount(3)
+        ->and($xpath->query($secondaryData))->toHaveCount(3)
+        ->and($xpath->query($primaryHeaders))->toHaveCount(3)
+        ->and($xpath->query($primaryData))->toHaveCount(3)
+        ->and($xpath->query($startedData))->toHaveCount(1);
 });
