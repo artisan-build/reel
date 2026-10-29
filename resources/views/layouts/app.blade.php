@@ -1,5 +1,47 @@
-<x-layouts::app.sidebar :title="$title ?? null">
-    <flux:main>
-        {{ $slot }}
-    </flux:main>
-</x-layouts::app.sidebar>
+@push('head')
+    <link rel="stylesheet" href="{{ asset('build/assets/fonts.css') }}">
+    <link rel="stylesheet" href="{{ asset('build/assets/app.css') }}">
+@endpush
+
+@push('scripts')
+    @persist('toast')
+        <flux:toast.group>
+            <flux:toast />
+        </flux:toast.group>
+    @endpersist
+
+    @fluxScripts
+@endpush
+
+<x-bfc-layout :title="$title ?? null">
+    <x-slot:sidebar>
+        <nav aria-label="{{ __('Reel navigation') }}" data-testid="reel-navigation" class="bfc-sidebar-links">
+            <a href="{{ route('bfc.dashboard') }}" class="bfc-shell-link" @if(request()->routeIs('bfc.dashboard')) aria-current="page" @endif wire:navigate>
+                <flux:icon.home class="size-5" />
+                {{ __('Dashboard') }}
+            </a>
+            <a href="{{ route('sessions.index') }}" class="bfc-shell-link" @if(request()->routeIs('sessions.*', 'applications.sessions.*')) aria-current="page" @endif wire:navigate>
+                <flux:icon.play-circle class="size-5" />
+                {{ __('Sessions') }}
+            </a>
+            <a href="{{ route('admin.applications.index') }}" class="bfc-shell-link" @if(request()->routeIs('admin.applications.*')) aria-current="page" @endif wire:navigate>
+                <flux:icon.rectangle-stack class="size-5" />
+                {{ __('Applications') }}
+            </a>
+            <a href="{{ route('bfc.ui.home') }}" class="bfc-shell-link" wire:navigate>
+                <flux:icon.cog class="size-5" />
+                {{ __('Account') }}
+            </a>
+            <a href="https://github.com/laravel/livewire-starter-kit" class="bfc-shell-link" target="_blank">
+                <flux:icon.folder-git-2 class="size-5" />
+                {{ __('Repository') }}
+            </a>
+            <a href="https://laravel.com/docs/starter-kits#livewire" class="bfc-shell-link" target="_blank">
+                <flux:icon.book-open-text class="size-5" />
+                {{ __('Documentation') }}
+            </a>
+        </nav>
+    </x-slot:sidebar>
+
+    {{ $slot }}
+</x-bfc-layout>

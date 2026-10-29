@@ -7,10 +7,12 @@ use ArtisanBuild\BuiltForCloud\Contracts\IdentityContext;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 #[Title('Applications')]
+#[Layout('layouts.app')]
 class Index extends Component
 {
     public function mount(): void

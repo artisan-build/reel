@@ -20,11 +20,13 @@ use ArtisanBuild\BuiltForCloud\RotateOptions;
 use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 #[Title('Application settings')]
+#[Layout('layouts.app')]
 class Show extends Component
 {
     public ApplicationForm $form;
