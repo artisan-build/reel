@@ -79,3 +79,17 @@ it('places Reel navigation in the package sidebar and page content in main', fun
     'create application' => ['admin.applications.create', 'admin.applications.index'],
     'application settings' => ['admin.applications.show', 'admin.applications.index'],
 ]);
+
+it('contains the sessions table within the page on narrow screens', function (): void {
+    $this->actingAs(User::factory()->create());
+
+    $response = $this->get(route('sessions.index'))->assertOk();
+    $document = new DOMDocument;
+    @$document->loadHTML($response->getContent());
+    $xpath = new DOMXPath($document);
+    $class = static fn (string $name): string => 'contains(concat(" ", normalize-space(@class), " "), " '.$name.' ")';
+    $sessionList = '//*[@data-testid="session-list" and '.$class('min-w-0').']';
+
+    expect($xpath->query($sessionList))->toHaveCount(1)
+        ->and($xpath->query($sessionList.'/div['.$class('overflow-x-auto').']/table['.$class('min-w-full').']'))->toHaveCount(1);
+});
