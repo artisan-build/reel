@@ -88,8 +88,11 @@ it('contains the sessions table within the page on narrow screens', function ():
     @$document->loadHTML($response->getContent());
     $xpath = new DOMXPath($document);
     $class = static fn (string $name): string => 'contains(concat(" ", normalize-space(@class), " "), " '.$name.' ")';
-    $sessionList = '//*[@data-testid="session-list" and '.$class('min-w-0').']';
+    $sessionList = '//*[@data-testid="session-list"]';
+    $responsiveTable = $sessionList.'/div['.$class('overflow-x-auto').']/table['
+        .$class('w-full').' and '.$class('table-fixed').' and '
+        .$class('sm:w-auto').' and '.$class('sm:min-w-full').' and '.$class('sm:table-auto').']';
 
     expect($xpath->query($sessionList))->toHaveCount(1)
-        ->and($xpath->query($sessionList.'/div['.$class('overflow-x-auto').']/table['.$class('min-w-full').']'))->toHaveCount(1);
+        ->and($xpath->query($responsiveTable))->toHaveCount(1);
 });

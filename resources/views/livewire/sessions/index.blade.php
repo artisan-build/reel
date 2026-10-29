@@ -60,9 +60,9 @@
         </section>
     @endif
 
-    <section class="min-w-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900" data-testid="session-list">
+    <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900" data-testid="session-list">
         <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
+            <table class="w-full table-fixed divide-y divide-zinc-200 text-sm sm:w-auto sm:min-w-full sm:table-auto dark:divide-zinc-700">
                 <thead class="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">
                     <tr>
                         <th class="px-4 py-3">{{ __('Started') }}</th>
