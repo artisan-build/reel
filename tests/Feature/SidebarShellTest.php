@@ -72,6 +72,23 @@ it('places Reel navigation in the package sidebar and page content in main', fun
     'application settings' => ['admin.applications.show', 'admin.applications.index'],
 ]);
 
+it('stacks the applications heading and wraps its actions on narrow screens', function (): void {
+    $this->actingAs(User::factory()->create());
+
+    $response = $this->get(route('bfc.dashboard'))->assertOk();
+    $document = new DOMDocument;
+    @$document->loadHTML($response->getContent());
+    $xpath = new DOMXPath($document);
+    $class = static fn (string $name): string => 'contains(concat(" ", normalize-space(@class), " "), " '.$name.' ")';
+    $header = '//*[@data-testid="applications-header"]';
+    $actions = $header.'/*[@data-testid="applications-actions"]';
+
+    expect($xpath->query($header.'['.$class('flex-col').' and '.$class('lg:flex-row').']'))->toHaveCount(1)
+        ->and($xpath->query($actions.'['.$class('flex-wrap').']'))->toHaveCount(1)
+        ->and($xpath->query($actions.'//*[@*[name()="wire:click"]="openHealth"]'))->toHaveCount(1)
+        ->and($xpath->query($actions.'//a[@href="'.route('admin.applications.create').'"]'))->toHaveCount(1);
+});
+
 it('keeps the sessions table legible on narrow screens', function (): void {
     $this->actingAs(User::factory()->create());
 

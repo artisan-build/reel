@@ -1,11 +1,11 @@
 <div class="mx-auto flex w-full max-w-6xl flex-col gap-8">
-    <div class="flex items-start justify-between gap-6">
+    <div class="flex flex-col items-start justify-between gap-6 lg:flex-row" data-testid="applications-header">
         <div>
             <flux:heading size="xl">{{ __('Applications') }}</flux:heading>
             <flux:text class="mt-2">{{ __('Manage monitored applications and their recording credentials.') }}</flux:text>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2" data-testid="applications-actions">
             <flux:button icon="heart" wire:click="openHealth" data-test="operational-health-button">
                 {{ __('Operational health') }}
                 @if ($this->orphanSweeperSuspended)

@@ -241,8 +241,13 @@ async function proveRole(roleCase) {
 }
 
 async function proveReelSurfaces(roleCase) {
-    await navigate('/dashboard', '[data-test="retention-diagnostics"]');
-    if (!await evaluate(`document.body.textContent.includes('Operational health')`)) {
+    await navigate('/dashboard', '[data-test="operational-health-button"]');
+    await evaluate(`document.querySelector('[data-test="operational-health-button"]').click()`);
+    await waitFor(
+        () => evaluate(`Boolean(document.querySelector('dialog[open] [data-test="retention-diagnostics"]'))`),
+        `Health diagnostics were unavailable for ${roleCase.role}.`,
+    );
+    if (!await evaluate(`document.querySelectorAll('[data-test="retention-diagnostics"] dd').length > 0`)) {
         throw new Error(`Dashboard content was unavailable for ${roleCase.role}.`);
     }
 
