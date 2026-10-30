@@ -4,8 +4,34 @@
         <flux:text class="mt-2">{{ __('Search recording metadata without downloading replay objects.') }}</flux:text>
     </div>
 
-    <section class="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-700 dark:bg-zinc-900">
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <section
+        class="rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+        x-data="{ open: @js($filtersOpenOnLoad) }"
+        data-testid="session-filters"
+    >
+        <div class="flex items-center justify-between gap-3 p-3">
+            <button
+                type="button"
+                class="flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-zinc-800 hover:bg-zinc-100"
+                x-on:click="open = ! open"
+                x-bind:aria-expanded="open"
+                aria-controls="session-filter-fields"
+                data-testid="session-filters-toggle"
+            >
+                <flux:icon.funnel class="size-4" />
+                {{ __('Filter and search') }}
+                @if ($this->activeFilterCount() > 0)
+                    <flux:badge size="sm" data-testid="session-filters-count">{{ trans_choice(':count active|:count active', $this->activeFilterCount(), ['count' => $this->activeFilterCount()]) }}</flux:badge>
+                @endif
+                <flux:icon.chevron-down class="size-4 transition" x-bind:class="open && 'rotate-180'" />
+            </button>
+
+            @if ($this->activeFilterCount() > 0)
+                <flux:button size="sm" variant="ghost" wire:click="clearFilters" data-testid="session-filters-clear">{{ __('Clear filters') }}</flux:button>
+            @endif
+        </div>
+
+        <div id="session-filter-fields" x-show="open" x-cloak class="grid gap-4 border-t border-zinc-200 p-5 sm:grid-cols-2 lg:grid-cols-4 dark:border-zinc-700">
             <flux:select wire:model.live="applicationId" :label="__('Application')">
                 <option value="">{{ __('All applications') }}</option>
                 @foreach ($this->applications as $application)

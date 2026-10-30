@@ -30,27 +30,18 @@ it('places Reel navigation in the package sidebar and page content in main', fun
 
     expect($xpath->query($navigation))->toHaveCount(1)
         ->and($xpath->query('//*[@data-testid="reel-navigation"]'))->toHaveCount(1)
-        ->and($links)->toHaveCount(6);
+        ->and($links)->toHaveCount(2);
 
     $destinations = [
-        route('bfc.dashboard'),
-        route('sessions.index'),
         route('admin.applications.index'),
-        route('bfc.ui.home'),
-        'https://github.com/laravel/livewire-starter-kit',
-        'https://laravel.com/docs/starter-kits#livewire',
+        route('sessions.index'),
     ];
 
     foreach ($destinations as $index => $destination) {
         $link = $links->item($index);
         expect($link)->toBeInstanceOf(DOMElement::class);
-        expect($link->getAttribute('href'))->toBe($destination);
-
-        if ($index < 4) {
-            expect($link->hasAttribute('wire:navigate'))->toBeTrue();
-        } else {
-            expect($link->getAttribute('target'))->toBe('_blank');
-        }
+        expect($link->getAttribute('href'))->toBe($destination)
+            ->and($link->hasAttribute('wire:navigate'))->toBeTrue();
     }
 
     $current = $xpath->query($navigation.'/a[@aria-current="page"]');
@@ -62,7 +53,8 @@ it('places Reel navigation in the package sidebar and page content in main', fun
         ->and($main->item(0)->childNodes->length)->toBeGreaterThan(0);
 
     if ($page === 'bfc.dashboard') {
-        expect($xpath->query('//main//*[@data-test="retention-diagnostics"]'))->toHaveCount(1);
+        expect($xpath->query('//main//*[@data-test="operational-health-button"]'))->toHaveCount(1)
+            ->and($main->item(0)->textContent)->toContain($application->name);
     } elseif ($page === 'admin.applications.create') {
         expect($xpath->query('//main//form//*[@*[name()="wire:model"]="form.name"]'))->toHaveCount(1);
     } else {
@@ -71,7 +63,7 @@ it('places Reel navigation in the package sidebar and page content in main', fun
 
     expect($xpath->query('//head/link[@href="'.asset('build/assets/app.css').'"]'))->toHaveCount(1);
 })->with([
-    'dashboard' => ['bfc.dashboard', 'bfc.dashboard'],
+    'dashboard' => ['bfc.dashboard', 'admin.applications.index'],
     'sessions' => ['sessions.index', 'sessions.index'],
     'application sessions' => ['applications.sessions.index', 'sessions.index'],
     'replay detail' => ['sessions.show', 'sessions.index'],
@@ -79,6 +71,23 @@ it('places Reel navigation in the package sidebar and page content in main', fun
     'create application' => ['admin.applications.create', 'admin.applications.index'],
     'application settings' => ['admin.applications.show', 'admin.applications.index'],
 ]);
+
+it('stacks the applications heading and wraps its actions on narrow screens', function (): void {
+    $this->actingAs(User::factory()->create());
+
+    $response = $this->get(route('bfc.dashboard'))->assertOk();
+    $document = new DOMDocument;
+    @$document->loadHTML($response->getContent());
+    $xpath = new DOMXPath($document);
+    $class = static fn (string $name): string => 'contains(concat(" ", normalize-space(@class), " "), " '.$name.' ")';
+    $header = '//*[@data-testid="applications-header"]';
+    $actions = $header.'/*[@data-testid="applications-actions"]';
+
+    expect($xpath->query($header.'['.$class('flex-col').' and '.$class('lg:flex-row').']'))->toHaveCount(1)
+        ->and($xpath->query($actions.'['.$class('flex-wrap').']'))->toHaveCount(1)
+        ->and($xpath->query($actions.'//*[@*[name()="wire:click"]="openHealth"]'))->toHaveCount(1)
+        ->and($xpath->query($actions.'//a[@href="'.route('admin.applications.create').'"]'))->toHaveCount(1);
+});
 
 it('keeps the sessions table legible on narrow screens', function (): void {
     $this->actingAs(User::factory()->create());

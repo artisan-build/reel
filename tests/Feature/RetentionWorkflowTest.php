@@ -7,6 +7,7 @@ use App\Events\OrphanObjectEligible;
 use App\Exceptions\RetentionRejected;
 use App\Jobs\DeleteUserErasureBatch;
 use App\Livewire\Applications\Create as CreateApplication;
+use App\Livewire\Applications\Index as ApplicationIndex;
 use App\Livewire\Applications\Show as ShowApplication;
 use App\Models\Application;
 use App\Models\RecordingSession;
@@ -910,6 +911,12 @@ it('surfaces retention convergence protection and storage diagnostics', function
 
     $this->actingAs(User::factory()->create())->get(route('bfc.dashboard'))
         ->assertOk()
+        ->assertSee('Operational health')
+        ->assertDontSee('Remaining prefix objects');
+
+    Livewire::test(ApplicationIndex::class)
+        ->call('openHealth')
+        ->assertSet('showHealth', true)
         ->assertSee('Protected recordings')
         ->assertSee('Remaining prefix objects')
         ->assertSee((string) $deleting->deletion_remaining_objects);

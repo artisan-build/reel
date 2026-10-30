@@ -16,29 +16,13 @@
 <x-bfc-layout :title="$title ?? null">
     <x-slot:sidebar>
         <nav aria-label="{{ __('Reel navigation') }}" data-testid="reel-navigation" class="bfc-sidebar-links">
-            <a href="{{ route('bfc.dashboard') }}" class="bfc-shell-link" @if(request()->routeIs('bfc.dashboard')) aria-current="page" @endif wire:navigate>
-                <flux:icon.home class="size-5" />
-                {{ __('Dashboard') }}
+            <a href="{{ route('admin.applications.index') }}" class="bfc-shell-link" @if(request()->routeIs('bfc.dashboard', 'admin.applications.*')) aria-current="page" @endif wire:navigate>
+                <flux:icon.rectangle-stack class="size-5" />
+                {{ __('Applications') }}
             </a>
             <a href="{{ route('sessions.index') }}" class="bfc-shell-link" @if(request()->routeIs('sessions.*', 'applications.sessions.*')) aria-current="page" @endif wire:navigate>
                 <flux:icon.play-circle class="size-5" />
                 {{ __('Sessions') }}
-            </a>
-            <a href="{{ route('admin.applications.index') }}" class="bfc-shell-link" @if(request()->routeIs('admin.applications.*')) aria-current="page" @endif wire:navigate>
-                <flux:icon.rectangle-stack class="size-5" />
-                {{ __('Applications') }}
-            </a>
-            <a href="{{ route('bfc.ui.home') }}" class="bfc-shell-link" wire:navigate>
-                <flux:icon.cog class="size-5" />
-                {{ __('Account') }}
-            </a>
-            <a href="https://github.com/laravel/livewire-starter-kit" class="bfc-shell-link" target="_blank">
-                <flux:icon.folder-git-2 class="size-5" />
-                {{ __('Repository') }}
-            </a>
-            <a href="https://laravel.com/docs/starter-kits#livewire" class="bfc-shell-link" target="_blank">
-                <flux:icon.book-open-text class="size-5" />
-                {{ __('Documentation') }}
             </a>
         </nav>
     </x-slot:sidebar>

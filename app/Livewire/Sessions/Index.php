@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -71,11 +72,42 @@ class Index extends Component
     #[Url(history: true)]
     public string $watched = '';
 
+    /**
+     * Whether the filters start open: only when the page was opened with a filter
+     * already set, so a shared link never hides what narrowed the list. The
+     * application an application's own sessions page scopes to does not count.
+     */
+    #[Locked]
+    public bool $filtersOpenOnLoad = false;
+
     public function mount(?Application $application = null): void
     {
+        $this->filtersOpenOnLoad = $this->activeFilterCount() > 0;
+
         if ($application instanceof Application) {
             $this->applicationId = $application->public_id;
         }
+    }
+
+    /** How many filters are narrowing the list, for the collapsed filter bar. */
+    public function activeFilterCount(): int
+    {
+        return count(array_filter([
+            $this->applicationId, $this->sessionId, $this->applicationUserId, $this->releaseId, $this->path,
+            $this->status, $this->markerType, $this->protected, $this->watched,
+            $this->startedFrom, $this->startedTo, $this->endedFrom, $this->endedTo, $this->durationMin, $this->durationMax,
+        ], fn (string $value): bool => $value !== ''));
+    }
+
+    /** Empty every filter. */
+    public function clearFilters(): void
+    {
+        $this->reset(
+            'applicationId', 'sessionId', 'applicationUserId', 'releaseId', 'path', 'status', 'markerType',
+            'protected', 'watched', 'startedFrom', 'startedTo', 'endedFrom', 'endedTo', 'durationMin', 'durationMax',
+        );
+
+        $this->resetPage();
     }
 
     public function render(): View
