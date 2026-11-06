@@ -592,7 +592,7 @@ class ChunkPrivacyValidator
         $decoded = preg_replace_callback(
             '/\\\\([0-9a-fA-F]{1,6})(?:\r\n|[ \n\r\t\f])?|\\\\([^\r\n\f])/u',
             function (array $match): string {
-                if (($match[1] ?? '') !== '') {
+                if ($match[1] !== '') {
                     $codepoint = hexdec($match[1]);
 
                     if ($codepoint === 0 || $codepoint > 0x10FFFF || ($codepoint >= 0xD800 && $codepoint <= 0xDFFF)) {
