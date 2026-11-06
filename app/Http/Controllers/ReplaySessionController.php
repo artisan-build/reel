@@ -16,9 +16,9 @@ class ReplaySessionController extends Controller
             ->with([
                 'application',
                 'epochs' => fn ($query) => $query->orderBy('ordinal'),
-                'markers' => fn ($query) => $query->orderBy('occurred_at'),
-                'protectionEvents' => fn ($query) => $query->orderBy('occurred_at'),
-                'transitions' => fn ($query) => $query->orderBy('transitioned_at'),
+                'markers' => fn ($query) => $query->oldest('occurred_at'),
+                'protectionEvents' => fn ($query) => $query->oldest('occurred_at'),
+                'transitions' => fn ($query) => $query->oldest('transitioned_at'),
             ])
             ->firstOrFail();
         $channelNonce = bin2hex(random_bytes(48));
