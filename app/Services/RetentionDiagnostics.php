@@ -15,6 +15,18 @@ class RetentionDiagnostics
         private readonly OrphanSweeper $sweeper,
     ) {}
 
+    /**
+     * Whether destructive orphan deletion is suspended, which is also the answer
+     * before the retention state row exists. A single-row read, so a page can ask
+     * without paying for the bucket inventory the full snapshot takes.
+     */
+    public function orphanSweeperSuspended(?object $state = null): bool
+    {
+        $state ??= DB::table('retention_states')->where('id', 1)->first();
+
+        return $state === null || (bool) $state->orphan_sweeper_suspended;
+    }
+
     /** @return array<string, bool|float|int|string|null> */
     public function snapshot(): array
     {
@@ -62,7 +74,7 @@ class RetentionDiagnostics
                 ->where('metric', 'post_delete_publish_preventions')->value('value') ?? 0),
             'manifest_without_object_count' => $manifestWithoutObject,
             'object_without_live_manifest_count' => $objectWithoutManifest,
-            'orphan_sweeper_suspended' => $state === null || (bool) $state->orphan_sweeper_suspended,
+            'orphan_sweeper_suspended' => $this->orphanSweeperSuspended($state),
             'database_high_water_at' => $state?->database_high_water_at,
             'object_high_water_at' => $state?->object_high_water_at,
             'last_orphan_sweep_error' => $state?->last_orphan_sweep_error,

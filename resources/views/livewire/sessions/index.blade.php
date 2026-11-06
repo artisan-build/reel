@@ -4,8 +4,34 @@
         <flux:text class="mt-2">{{ __('Search recording metadata without downloading replay objects.') }}</flux:text>
     </div>
 
-    <section class="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-700 dark:bg-zinc-900">
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <section
+        class="rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+        x-data="{ open: @js($filtersOpenOnLoad) }"
+        data-testid="session-filters"
+    >
+        <div class="flex items-center justify-between gap-3 p-3">
+            <button
+                type="button"
+                class="flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-zinc-800 hover:bg-zinc-100"
+                x-on:click="open = ! open"
+                x-bind:aria-expanded="open"
+                aria-controls="session-filter-fields"
+                data-testid="session-filters-toggle"
+            >
+                <flux:icon.funnel class="size-4" />
+                {{ __('Filter and search') }}
+                @if ($this->activeFilterCount() > 0)
+                    <flux:badge size="sm" data-testid="session-filters-count">{{ trans_choice(':count active|:count active', $this->activeFilterCount(), ['count' => $this->activeFilterCount()]) }}</flux:badge>
+                @endif
+                <flux:icon.chevron-down class="size-4 transition" x-bind:class="open && 'rotate-180'" />
+            </button>
+
+            @if ($this->activeFilterCount() > 0)
+                <flux:button size="sm" variant="ghost" wire:click="clearFilters" data-testid="session-filters-clear">{{ __('Clear filters') }}</flux:button>
+            @endif
+        </div>
+
+        <div id="session-filter-fields" x-show="open" x-cloak class="grid gap-4 border-t border-zinc-200 p-5 sm:grid-cols-2 lg:grid-cols-4 dark:border-zinc-700">
             <flux:select wire:model.live="applicationId" :label="__('Application')">
                 <option value="">{{ __('All applications') }}</option>
                 @foreach ($this->applications as $application)
@@ -62,26 +88,26 @@
 
     <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900" data-testid="session-list">
         <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
+            <table class="w-full table-fixed divide-y divide-zinc-200 text-sm sm:w-auto sm:min-w-full sm:table-auto dark:divide-zinc-700">
                 <thead class="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">
                     <tr>
-                        <th class="px-4 py-3">{{ __('Started') }}</th>
-                        <th class="px-4 py-3">{{ __('Application') }}</th>
-                        <th class="px-4 py-3">{{ __('Path') }}</th>
-                        <th class="px-4 py-3">{{ __('Duration') }}</th>
-                        <th class="px-4 py-3">{{ __('Status') }}</th>
-                        <th class="px-4 py-3"><span class="sr-only">{{ __('Open') }}</span></th>
+                        <th class="px-2 py-3 sm:px-4">{{ __('Started') }}</th>
+                        <th class="hidden px-4 py-3 sm:table-cell">{{ __('Application') }}</th>
+                        <th class="hidden px-4 py-3 sm:table-cell">{{ __('Path') }}</th>
+                        <th class="hidden px-4 py-3 sm:table-cell">{{ __('Duration') }}</th>
+                        <th class="px-2 py-3 sm:px-4">{{ __('Status') }}</th>
+                        <th class="px-2 py-3 sm:px-4"><span class="sr-only">{{ __('Open') }}</span></th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-200 dark:divide-zinc-700">
                     @forelse ($this->sessions as $session)
                         <tr wire:key="session-{{ $session->id }}">
-                            <td class="whitespace-nowrap px-4 py-4">{{ $session->started_at->toDayDateTimeString() }}</td>
-                            <td class="px-4 py-4">{{ $session->application->name }}</td>
-                            <td class="max-w-xs truncate px-4 py-4 font-mono text-xs">{{ $session->latest_path ?? $session->initial_path ?? __('Unknown') }}</td>
-                            <td class="whitespace-nowrap px-4 py-4">{{ $session->duration_seconds === null ? __('In progress') : trans_choice(':count second|:count seconds', $session->duration_seconds, ['count' => $session->duration_seconds]) }}</td>
-                            <td class="px-4 py-4"><flux:badge>{{ str($session->status->value)->headline() }}</flux:badge></td>
-                            <td class="px-4 py-4 text-right">
+                            <td class="px-2 py-4 sm:whitespace-nowrap sm:px-4">{{ $session->started_at->toDayDateTimeString() }}</td>
+                            <td class="hidden px-4 py-4 sm:table-cell">{{ $session->application->name }}</td>
+                            <td class="hidden max-w-xs truncate px-4 py-4 font-mono text-xs sm:table-cell">{{ $session->latest_path ?? $session->initial_path ?? __('Unknown') }}</td>
+                            <td class="hidden whitespace-nowrap px-4 py-4 sm:table-cell">{{ $session->duration_seconds === null ? __('In progress') : trans_choice(':count second|:count seconds', $session->duration_seconds, ['count' => $session->duration_seconds]) }}</td>
+                            <td class="px-2 py-4 sm:px-4"><flux:badge>{{ str($session->status->value)->headline() }}</flux:badge></td>
+                            <td class="px-2 py-4 text-right sm:px-4">
                                 <flux:link :href="route('sessions.show', ['application' => $session->application, 'recordingSession' => $session])" wire:navigate>
                                     {{ __('Inspect') }}
                                 </flux:link>

@@ -15,11 +15,14 @@ use ArtisanBuild\BuiltForCloud\CredentialOwnership;
 use ArtisanBuild\BuiltForCloud\CredentialPurpose;
 use ArtisanBuild\BuiltForCloud\DomainIdentityContext;
 use ArtisanBuild\BuiltForCloud\MintOptions;
+use ArtisanBuild\BuiltForCloud\OwnerCredentialMinter;
+use ArtisanBuild\BuiltForCloud\Ownership;
 use ArtisanBuild\BuiltForCloud\Rs256PublicKey;
 use ArtisanBuild\BuiltForCloud\User as BuiltForCloudUser;
 use ArtisanBuild\ReelClient\Envelope;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /*
@@ -94,6 +97,34 @@ function testRsaKeyPair(bool $fresh = false): array
     }
 
     return $generated;
+}
+
+function originSyncCredential(string $token, bool $owner = false): Credential
+{
+    $credential = resolve(OwnerCredentialMinter::class)->mintFromHash(hash('sha256', $token));
+
+    if ($owner) {
+        $ownership = Ownership::current();
+
+        if ($ownership instanceof Ownership) {
+            $ownership->forceFill(['owner_credential_id' => $credential->getKey()])->save();
+        } else {
+            Ownership::query()->create(['owner_credential_id' => $credential->getKey()]);
+        }
+    }
+
+    return $credential;
+}
+
+/** @return array{token: string, credential: Credential} */
+function originSyncOwner(): array
+{
+    $token = 'origin-owner-'.Str::uuid();
+
+    return [
+        'token' => $token,
+        'credential' => originSyncCredential($token, true),
+    ];
 }
 
 /** @return array{credential: Credential, code: string} */

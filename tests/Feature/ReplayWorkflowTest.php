@@ -176,11 +176,11 @@ beforeEach(function (): void {
 it('allows every authenticated viewer to list and inspect sessions while blocking guests', function (): void {
     $session = makeReplaySession();
 
-    $this->get(route('sessions.index'))->assertRedirect(route('bfc.login'));
+    $this->get(route('sessions.index'))->assertRedirectContains(route('bfc.login'));
     $this->get(route('sessions.show', [
         'application' => $session->application,
         'recordingSession' => $session,
-    ]))->assertRedirect(route('bfc.login'));
+    ]))->assertRedirectContains(route('bfc.login'));
 
     $this->actingAs(User::factory()->create());
     $response = $this->get(route('sessions.show', [

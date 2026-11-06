@@ -406,6 +406,54 @@ it('accepts a verified chunk and derives session authority only from its grant',
     Storage::disk('local')->assertExists($chunk->object_key);
 });
 
+it('applies an owner origin replacement through the recording HTTP path', function (): void {
+    Queue::fake();
+    $owner = originSyncOwner();
+    $detachedOrigin = 'https://detached.example';
+    $attachedOrigin = 'https://new-custom.example';
+    $context = ingestContext(['allowed_origins' => [$detachedOrigin]]);
+    $application = $context['application'];
+
+    $this->withToken($owner['token'])
+        ->putJson(route('bfc.applications.allowed-origins.update', $application), [
+            'allowed_origins' => [$attachedOrigin],
+        ])
+        ->assertOk();
+
+    $attachedContext = [
+        ...$context,
+        'application' => $application->refresh(),
+        'session_id' => bin2hex(random_bytes(32)),
+        'origin' => $attachedOrigin,
+    ];
+
+    postIngestEnvelope(ingestEnvelope($attachedContext), $attachedOrigin)
+        ->assertAccepted()
+        ->assertJson(['accepted' => true, 'duplicate' => false]);
+
+    $session = RecordingSession::query()->sole();
+    $chunk = RecordingChunk::query()->sole();
+    expect($session->application_id)->toBe($application->getKey())
+        ->and($session->origin)->toBe($attachedOrigin)
+        ->and($chunk->recording_session_id)->toBe($session->getKey());
+    Storage::disk('local')->assertExists($chunk->object_key);
+
+    $beforeDeniedAttempt = ingestBoundaryState();
+    $detachedContext = [
+        ...$context,
+        'application' => $application,
+        'session_id' => bin2hex(random_bytes(32)),
+        'origin' => $detachedOrigin,
+    ];
+
+    postIngestEnvelope(ingestEnvelope($detachedContext), $detachedOrigin)
+        ->assertUnauthorized()
+        ->assertJsonPath('reason', 'invalid_grant');
+
+    expect(ingestBoundaryState())->toBe($beforeDeniedAttempt);
+    Queue::assertNothingPushed();
+});
+
 it('derives indexed initial and latest paths from sanitized metadata events', function (): void {
     $context = ingestContext();
     $grant = ingestGrant($context);
@@ -666,7 +714,13 @@ it('rejects every unusable credential lifecycle state before ingest mutation', f
         if ($state === 'revoked') {
             resolve(RevokeCredential::class)($credential->id);
         } elseif ($state === 'expired') {
-            $this->travel(61)->seconds();
+            // Backdate the row instead of travel()-ing forward: a forwarded clock puts the freshly
+            // minted grant in the future for the JWT verifier's system clock, which would refuse the
+            // grant before the credential-expiry filter under test is ever consulted.
+            DB::table('credentials')->where('id', $credential->id)->update([
+                'expires_at' => now()->subSecond(),
+            ]);
+            $credential->refresh();
         } else {
             DB::table('credentials')->where('id', $credential->id)->update([
                 'public_key' => $key['public']."\n",

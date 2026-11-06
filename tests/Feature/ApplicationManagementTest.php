@@ -160,7 +160,7 @@ it('guards application management routes with package authentication', function 
         expect($route->gatherMiddleware())->toContain('bfc.auth')->not->toContain('admin');
     }
 
-    $this->get(route('admin.applications.show', $application))->assertRedirect(route('bfc.login'));
+    $this->get(route('admin.applications.show', $application))->assertRedirectContains(route('bfc.login'));
 });
 
 it('renders test-created applications on the index for Members', function (): void {

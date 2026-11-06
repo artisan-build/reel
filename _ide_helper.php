@@ -26335,6 +26335,13 @@ namespace Illuminate\Http\Client {
             }
     }
 
+namespace App\Livewire\Applications {
+    /**
+     */
+    class Index extends \Livewire\Component {
+            }
+    }
+
 namespace Illuminate\View {
     /**
      */

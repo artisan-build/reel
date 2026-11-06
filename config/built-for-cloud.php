@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Http\Controllers\DashboardController;
+use App\Livewire\Applications\Index as ApplicationIndex;
 use App\ReelCredentialDeclaration;
 
 return [
@@ -14,7 +14,7 @@ return [
         'product_url' => 'https://scalpels.app/products/reel',
     ],
 
-    'dashboard' => DashboardController::class,
+    'dashboard' => ApplicationIndex::class,
 
     'credentials' => [
         'guard' => env('BUILT_FOR_CLOUD_CREDENTIAL_GUARD', 'bfc'),
