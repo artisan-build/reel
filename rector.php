@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Rector\Config\RectorConfig;
+use RectorLaravel\Rector\FuncCall\UnlinkFuncCallToFileFacadeDeleteRector;
 use RectorLaravel\Set\LaravelLevelSetList;
 use RectorLaravel\Set\LaravelSetList;
 
@@ -18,7 +19,10 @@ return RectorConfig::configure()
         __DIR__.'/routes',
         __DIR__.'/tests',
     ])
-    ->withSkip([__DIR__.'/bootstrap/cache'])
+    ->withSkip([
+        __DIR__.'/bootstrap/cache',
+        UnlinkFuncCallToFileFacadeDeleteRector::class,
+    ])
     ->withPhpSets(php83: true)
     ->withSets([
         LaravelLevelSetList::UP_TO_LARAVEL_120,
