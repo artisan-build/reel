@@ -77,8 +77,8 @@ jobs:
       # Keeping it after the tests means the test signal is still there when that happens.
       - name: Run Security Audit
         run: |
-          composer audit
-          composer audit --working-dir=packages/reel-client
+          composer audit --locked --abandoned=report
+          composer audit --working-dir=packages/reel-client --locked --abandoned=report
 
   lowest:
     name: lowest (Laravel 13.17.0)

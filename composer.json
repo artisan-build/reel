@@ -30,7 +30,7 @@
     "require-dev": {
         "artisan-build/kibble": "^1.2",
         "barryvdh/laravel-ide-helper": "^3.6",
-        "driftingly/rector-laravel": "^2.1 <2.6",
+        "driftingly/rector-laravel": "^2.7.3",
         "fakerphp/faker": "^1.24",
         "larastan/larastan": "^3.9",
         "laravel/pail": "^1.2.5",
@@ -112,8 +112,8 @@
             "@lint",
             "@stan",
             "@test",
-            "composer audit --working-dir=packages/reel-client",
-            "composer audit"
+            "composer audit --working-dir=packages/reel-client --abandoned=report",
+            "composer audit --abandoned=report"
         ],
         "report": [
             "@php -r \"echo PHP_EOL . '=== Rector ===' . PHP_EOL;\"",
@@ -125,7 +125,7 @@
             "@php -r \"echo PHP_EOL . '=== Tests ===' . PHP_EOL;\"",
             "-@php artisan test",
             "@php -r \"echo PHP_EOL . '=== Security Audit ===' . PHP_EOL;\"",
-            "-composer audit"
+            "-composer audit --abandoned=report"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
@@ -162,6 +162,9 @@
         }
     ],
     "config": {
+        "audit": {
+            "ignore-abandoned": ["symplify/rule-doc-generator-contracts"]
+        },
         "optimize-autoloader": true,
         "preferred-install": "dist",
         "sort-packages": true,
